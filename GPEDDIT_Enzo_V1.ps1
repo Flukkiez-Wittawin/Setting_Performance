@@ -61,15 +61,50 @@ function Apply-BreathingGlowEffect {
 }
 
 function Apply-CardHoverAnimation {
-  param($card, $targetOpacity)
+  param($card, $isHovered)
   try {
-    $opacityAnim = New-Object System.Windows.Media.Animation.DoubleAnimation
-    $opacityAnim.To = $targetOpacity
-    $opacityAnim.Duration = New-Object System.Windows.Duration([TimeSpan]::FromMilliseconds(200))
-    $opacityAnim.EasingFunction = New-Object System.Windows.Media.Animation.CubicEase
-    $opacityAnim.EasingFunction.EasingMode = [System.Windows.Media.Animation.EasingMode]::EaseOut
+    $duration = New-Object System.Windows.Duration([TimeSpan]::FromMilliseconds(150))
     
+    # Scale animation (zoom in slightly on hover)
+    $scaleAnimX = New-Object System.Windows.Media.Animation.DoubleAnimation
+    $scaleAnimX.To = if ($isHovered) { 1.04 } else { 1.0 }
+    $scaleAnimX.Duration = $duration
+    $scaleAnimX.EasingFunction = New-Object System.Windows.Media.Animation.CubicEase
+    
+    $scaleAnimY = New-Object System.Windows.Media.Animation.DoubleAnimation
+    $scaleAnimY.To = if ($isHovered) { 1.04 } else { 1.0 }
+    $scaleAnimY.Duration = $duration
+    $scaleAnimY.EasingFunction = New-Object System.Windows.Media.Animation.CubicEase
+    
+    # Translation animation (slide out to the right slightly)
+    $transAnimX = New-Object System.Windows.Media.Animation.DoubleAnimation
+    $transAnimX.To = if ($isHovered) { 8 } else { 0 }
+    $transAnimX.Duration = $duration
+    $transAnimX.EasingFunction = New-Object System.Windows.Media.Animation.CubicEase
+    
+    $tg = $card.RenderTransform
+    if ($tg -and $tg.Children.Count -ge 2) {
+      $st = $tg.Children[0]
+      $tt = $tg.Children[1]
+      $st.BeginAnimation([System.Windows.Media.ScaleTransform]::ScaleXProperty, $scaleAnimX)
+      $st.BeginAnimation([System.Windows.Media.ScaleTransform]::ScaleYProperty, $scaleAnimY)
+      $tt.BeginAnimation([System.Windows.Media.TranslateTransform]::XProperty, $transAnimX)
+    }
+    
+    # Glow effect opacity
     if ($card.Effect) {
+      # Keep active selected card glow high even when mouse leaves
+      $targetOpacity = 0.3
+      if ($isHovered) {
+        $targetOpacity = 0.75
+      }
+      elseif ($card.Name -match "Mode(\d+)" -and "Mode$($Matches[1])" -eq $script:selectedMode) {
+        $targetOpacity = 0.85
+      }
+      
+      $opacityAnim = New-Object System.Windows.Media.Animation.DoubleAnimation
+      $opacityAnim.To = $targetOpacity
+      $opacityAnim.Duration = $duration
       $card.Effect.BeginAnimation([System.Windows.Media.Effects.DropShadowEffect]::OpacityProperty, $opacityAnim)
     }
   }
@@ -255,6 +290,8 @@ function Backup-CurrentSettings {
   $backup["Mouse"] = $mouseBackup
   $backup["MouseDataQueueSize"] = Get-RegistryValue "HKLM:\SYSTEM\CurrentControlSet\Services\mouclass\Parameters" "MouseDataQueueSize"
   $backup["MouseDataThrottleSize"] = Get-RegistryValue "HKLM:\SYSTEM\CurrentControlSet\Services\mouclass\Parameters" "MouseDataThrottleSize"
+  $backup["mouclass_Wpp"] = Get-RegistryValue "HKLM:\SYSTEM\CurrentControlSet\Services\mouclass\Parameters" "WppRecorder_UseTimeStamp"
+  $backup["mouhid_Wpp"] = Get-RegistryValue "HKLM:\SYSTEM\CurrentControlSet\Services\mouhid\Parameters" "WppRecorder_UseTimeStamp"
     
   # --- Keyboard ---
   $kbKeys = @("KeyboardDelay", "KeyboardSpeed")
@@ -262,6 +299,8 @@ function Backup-CurrentSettings {
   foreach ($k in $kbKeys) { $kbBackup[$k] = Get-RegistryValue "HKCU:\Control Panel\Keyboard" $k }
   $backup["Keyboard"] = $kbBackup
   $backup["KbDataQueueSize"] = Get-RegistryValue "HKLM:\SYSTEM\CurrentControlSet\Services\kbdclass\Parameters" "KeyboardDataQueueSize"
+  $backup["kbdclass_Wpp"] = Get-RegistryValue "HKLM:\SYSTEM\CurrentControlSet\Services\kbdclass\Parameters" "WppRecorder_UseTimeStamp"
+  $backup["kbdhid_Wpp"] = Get-RegistryValue "HKLM:\SYSTEM\CurrentControlSet\Services\kbdhid\Parameters" "WppRecorder_UseTimeStamp"
   $accKeys = @("AutoRepeatDelay", "AutoRepeatRate", "DelayBeforeAcceptance", "Flags", "BounceTime")
   $accBackup = @{}
   foreach ($k in $accKeys) { $accBackup[$k] = Get-RegistryValue "HKCU:\Control Panel\Accessibility\Keyboard Response" $k }
@@ -536,6 +575,8 @@ function Restore-OriginalSettings {
   }
   Set-RegistryFromBackup "HKLM:\SYSTEM\CurrentControlSet\Services\mouclass\Parameters" "MouseDataQueueSize" $backup.MouseDataQueueSize
   Set-RegistryFromBackup "HKLM:\SYSTEM\CurrentControlSet\Services\mouclass\Parameters" "MouseDataThrottleSize" $backup.MouseDataThrottleSize
+  Set-RegistryFromBackup "HKLM:\SYSTEM\CurrentControlSet\Services\mouclass\Parameters" "WppRecorder_UseTimeStamp" $backup.mouclass_Wpp
+  Set-RegistryFromBackup "HKLM:\SYSTEM\CurrentControlSet\Services\mouhid\Parameters" "WppRecorder_UseTimeStamp" $backup.mouhid_Wpp
   Log-Write "   -> Mouse settings restored."
     
   # --- Keyboard ---
@@ -546,6 +587,8 @@ function Restore-OriginalSettings {
     }
   }
   Set-RegistryFromBackup "HKLM:\SYSTEM\CurrentControlSet\Services\kbdclass\Parameters" "KeyboardDataQueueSize" $backup.KbDataQueueSize
+  Set-RegistryFromBackup "HKLM:\SYSTEM\CurrentControlSet\Services\kbdclass\Parameters" "WppRecorder_UseTimeStamp" $backup.kbdclass_Wpp
+  Set-RegistryFromBackup "HKLM:\SYSTEM\CurrentControlSet\Services\kbdhid\Parameters" "WppRecorder_UseTimeStamp" $backup.kbdhid_Wpp
   if ($backup.KeyboardAccessibility) {
     $backup.KeyboardAccessibility.PSObject.Properties | ForEach-Object {
       Set-RegistryFromBackup "HKCU:\Control Panel\Accessibility\Keyboard Response" $_.Name $_.Value
@@ -760,13 +803,13 @@ function Get-SystemSpecs {
 [xml]$xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="AllSetting x FiveM" Height="560" Width="850"
+        Title="AllSetting x FiveM" Height="650" Width="1050"
         WindowStartupLocation="CenterScreen" ResizeMode="NoResize"
         WindowStyle="None" AllowsTransparency="True" Background="Transparent">
 
   <Window.Resources>
     <DropShadowEffect x:Key="NeonGlow" BlurRadius="18" Color="#00A3FF" ShadowDepth="0" Opacity="0.5"/>
-    <DropShadowEffect x:Key="PanelGlow" BlurRadius="30" Color="#000000" ShadowDepth="0" Opacity="0.8"/>
+    <DropShadowEffect x:Key="PanelGlow" BlurRadius="35" Color="#000000" ShadowDepth="0" Opacity="0.85"/>
     <DropShadowEffect x:Key="GoldGlow" BlurRadius="18" Color="#FFD700" ShadowDepth="0" Opacity="0.5"/>
     <DropShadowEffect x:Key="PurpleGlow" BlurRadius="18" Color="#9B59B6" ShadowDepth="0" Opacity="0.5"/>
     <DropShadowEffect x:Key="GreenGlow" BlurRadius="18" Color="#2ECC71" ShadowDepth="0" Opacity="0.5"/>
@@ -795,14 +838,14 @@ function Get-SystemSpecs {
       <Setter Property="Template">
         <Setter.Value>
           <ControlTemplate TargetType="{x:Type Thumb}">
-            <Border x:Name="rectangle" CornerRadius="2" Background="#25FFFFFF" Width="4" Height="Auto" />
+            <Border x:Name="rectangle" CornerRadius="3" Background="#20FFFFFF" Width="5" Height="Auto" />
             <ControlTemplate.Triggers>
               <Trigger Property="IsMouseOver" Value="true">
-                <Setter TargetName="rectangle" Property="Background" Value="#50FFFFFF"/>
-                <Setter TargetName="rectangle" Property="Width" Value="5"/>
+                <Setter TargetName="rectangle" Property="Background" Value="#40FFFFFF"/>
+                <Setter TargetName="rectangle" Property="Width" Value="6"/>
               </Trigger>
               <Trigger Property="IsDragging" Value="true">
-                <Setter TargetName="rectangle" Property="Background" Value="#A000A3FF"/>
+                <Setter TargetName="rectangle" Property="Background" Value="#8000A3FF"/>
               </Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>
@@ -812,7 +855,7 @@ function Get-SystemSpecs {
 
     <Style TargetType="{x:Type ScrollBar}">
       <Setter Property="Background" Value="Transparent"/>
-      <Setter Property="Width" Value="5"/>
+      <Setter Property="Width" Value="6"/>
       <Setter Property="Template">
         <Setter.Value>
           <ControlTemplate TargetType="{x:Type ScrollBar}">
@@ -835,56 +878,82 @@ function Get-SystemSpecs {
     </Style>
   </Window.Resources>
 
-  <Border CornerRadius="32" BorderBrush="#1200A3FF" BorderThickness="1" Effect="{StaticResource PanelGlow}">
+  <Border CornerRadius="24" BorderThickness="1.5" Effect="{StaticResource PanelGlow}">
+    <Border.BorderBrush>
+      <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+        <GradientStop Color="#2000A3FF" Offset="0"/>
+        <GradientStop Color="#0800A3FF" Offset="0.5"/>
+        <GradientStop Color="#1500A3FF" Offset="1"/>
+      </LinearGradientBrush>
+    </Border.BorderBrush>
     <Border.Background>
       <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-        <GradientStop Color="#080A0D" Offset="0.0"/>
-        <GradientStop Color="#0C0E12" Offset="0.5"/>
-        <GradientStop Color="#080A0D" Offset="1.0"/>
+        <GradientStop Color="#06080C" Offset="0.0"/>
+        <GradientStop Color="#0B0F16" Offset="0.5"/>
+        <GradientStop Color="#070A0F" Offset="1.0"/>
       </LinearGradientBrush>
     </Border.Background>
 
     <Grid>
       <Grid.RowDefinitions>
-        <RowDefinition Height="52"/>
+        <RowDefinition Height="48"/>
         <RowDefinition Height="*"/>
       </Grid.RowDefinitions>
 
+      <!-- ==================== HEADER BAR ==================== -->
       <Grid Name="HeaderBar" Grid.Row="0" Background="Transparent" Cursor="SizeAll">
-        <Border Height="1" VerticalAlignment="Bottom" Background="#0D00A3FF"/>
-        <TextBlock Text="MINISHAWTY PROJECT" FontSize="12" FontWeight="SemiBold"
-                   Foreground="#00A3FF" HorizontalAlignment="Center" VerticalAlignment="Center">
-          <TextBlock.Effect>
-            <DropShadowEffect BlurRadius="6" Color="#00A3FF" ShadowDepth="0" Opacity="0.4"/>
-          </TextBlock.Effect>
-        </TextBlock>
-        
-        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,18,0">
-          <Button Name="BtnMinimize" Width="34" Height="30" Background="Transparent" BorderBrush="Transparent" Margin="0,0,6,0">
+        <Border Height="1" VerticalAlignment="Bottom">
+          <Border.Background>
+            <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+              <GradientStop Color="#0000A3FF" Offset="0"/>
+              <GradientStop Color="#2500A3FF" Offset="0.5"/>
+              <GradientStop Color="#0000A3FF" Offset="1"/>
+            </LinearGradientBrush>
+          </Border.Background>
+        </Border>
+
+        <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="22,0,0,0">
+          <Path Data="M 13,2 L 5,11 L 11,11 L 7,18 L 15,9 L 9,9 Z" Fill="#00A3FF" Width="14" Height="14" Stretch="Uniform" Margin="0,0,8,0" VerticalAlignment="Center">
+            <Path.Effect>
+              <DropShadowEffect BlurRadius="8" Color="#00A3FF" ShadowDepth="0" Opacity="0.7"/>
+            </Path.Effect>
+          </Path>
+          <TextBlock Text="MINISHAWTY" FontSize="13" FontWeight="Bold" Foreground="#00A3FF" VerticalAlignment="Center">
+            <TextBlock.Effect>
+              <DropShadowEffect BlurRadius="6" Color="#00A3FF" ShadowDepth="0" Opacity="0.35"/>
+            </TextBlock.Effect>
+          </TextBlock>
+          <TextBlock Text=" PROJECT" FontSize="13" FontWeight="Normal" Foreground="#55FFFFFF" VerticalAlignment="Center"/>
+          <Border CornerRadius="4" Background="#0800A3FF" BorderBrush="#1800A3FF" BorderThickness="1" Padding="7,2" Margin="10,0,0,0" VerticalAlignment="Center">
+            <TextBlock Text="v5.0" FontSize="8" FontWeight="Bold" Foreground="#4000A3FF"/>
+          </Border>
+        </StackPanel>
+
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,16,0">
+          <Button Name="BtnMinimize" Width="36" Height="32" Background="Transparent" BorderBrush="Transparent" Margin="0,0,4,0">
             <Button.Template>
               <ControlTemplate TargetType="Button">
                 <Border x:Name="Bg" Background="Transparent" CornerRadius="6">
-                  <Rectangle x:Name="Icon" Width="10" Height="1.5" Fill="#70FFFFFF" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                  <Rectangle x:Name="Icon" Width="11" Height="1.5" Fill="#55FFFFFF" VerticalAlignment="Center" HorizontalAlignment="Center"/>
                 </Border>
                 <ControlTemplate.Triggers>
                   <Trigger Property="IsMouseOver" Value="True">
-                    <Setter TargetName="Bg" Property="Background" Value="#1500A3FF"/>
+                    <Setter TargetName="Bg" Property="Background" Value="#1200A3FF"/>
                     <Setter TargetName="Icon" Property="Fill" Value="#00A3FF"/>
                   </Trigger>
                 </ControlTemplate.Triggers>
               </ControlTemplate>
             </Button.Template>
           </Button>
-          
-          <Button Name="BtnClose" Width="34" Height="30" Background="Transparent" BorderBrush="Transparent">
+          <Button Name="BtnClose" Width="36" Height="32" Background="Transparent" BorderBrush="Transparent">
             <Button.Template>
               <ControlTemplate TargetType="Button">
                 <Border x:Name="Bg" Background="Transparent" CornerRadius="6">
-                  <Path x:Name="Icon" Data="M 2,2 L 10,10 M 10,2 L 2,10" Stroke="#70FFFFFF" StrokeThickness="1.5" Width="12" Height="12" Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                  <Path x:Name="Icon" Data="M 2,2 L 10,10 M 10,2 L 2,10" Stroke="#55FFFFFF" StrokeThickness="1.5" Width="12" Height="12" Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                 </Border>
                 <ControlTemplate.Triggers>
                   <Trigger Property="IsMouseOver" Value="True">
-                    <Setter TargetName="Bg" Property="Background" Value="#E74C3C"/>
+                    <Setter TargetName="Bg" Property="Background" Value="#FF4757"/>
                     <Setter TargetName="Icon" Property="Stroke" Value="#FFFFFF"/>
                   </Trigger>
                 </ControlTemplate.Triggers>
@@ -893,475 +962,436 @@ function Get-SystemSpecs {
           </Button>
         </StackPanel>
       </Grid>
- 
+
       <Grid Grid.Row="1">
-        
-        <!-- LOGIN VIEW -->
-        <Grid Name="ViewLogin" Visibility="Visible" Margin="60">
+
+        <!-- ==================== LOGIN VIEW ==================== -->
+        <Grid Name="ViewLogin" Visibility="Visible">
           <Grid.RowDefinitions>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
           </Grid.RowDefinitions>
-          
-          <StackPanel Grid.Row="0" VerticalAlignment="Center" HorizontalAlignment="Center">
-            <!-- Neon Brand Logo Icon (Hexagon + Lightning Bolt) -->
-            <Viewbox Width="64" Height="64" Margin="0,0,0,16" HorizontalAlignment="Center">
+
+          <StackPanel Grid.Row="1" HorizontalAlignment="Center" Width="420">
+            <!-- Logo -->
+            <Viewbox Width="72" Height="72" Margin="0,0,0,20" HorizontalAlignment="Center">
               <Grid>
-                <!-- Outer Neon Hexagon -->
-                <Path Data="M 30,2 L 58,16 L 58,46 L 30,60 L 2,46 L 2,16 Z" 
-                      Stroke="#00FFD2" StrokeThickness="3" Fill="#1200FFD2">
+                <Path Data="M 30,2 L 58,16 L 58,46 L 30,60 L 2,46 L 2,16 Z"
+                      Stroke="#00FFD2" StrokeThickness="2.5" Fill="#0800FFD2">
                   <Path.Effect>
-                    <DropShadowEffect BlurRadius="12" Color="#00FFD2" ShadowDepth="0" Opacity="0.8"/>
+                    <DropShadowEffect BlurRadius="16" Color="#00FFD2" ShadowDepth="0" Opacity="0.7"/>
                   </Path.Effect>
                 </Path>
-                <!-- Inner Neon Lightning Bolt -->
-                <Path Data="M 30,12 L 18,32 L 30,32 L 30,48 L 42,28 L 30,28 Z" 
+                <Path Data="M 30,12 L 18,32 L 30,32 L 30,48 L 42,28 L 30,28 Z"
                       Fill="#00A3FF">
                   <Path.Effect>
-                    <DropShadowEffect BlurRadius="15" Color="#00A3FF" ShadowDepth="0" Opacity="0.9"/>
+                    <DropShadowEffect BlurRadius="18" Color="#00A3FF" ShadowDepth="0" Opacity="0.85"/>
                   </Path.Effect>
                 </Path>
               </Grid>
             </Viewbox>
-            <TextBlock Text="MINISHAWTY PROJECT" FontSize="28" FontWeight="SemiBold" HorizontalAlignment="Center">
+
+            <!-- Brand Title -->
+            <TextBlock Text="MINISHAWTY PROJECT" FontSize="30" FontWeight="Bold" HorizontalAlignment="Center">
               <TextBlock.Foreground>
                 <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
-                   <GradientStop Color="#00A3FF" Offset="0.0"/>
-                   <GradientStop Color="#00E0FF" Offset="1.0"/>
+                  <GradientStop Color="#00A3FF" Offset="0.0"/>
+                  <GradientStop Color="#00D4FF" Offset="0.5"/>
+                  <GradientStop Color="#00FFA3" Offset="1.0"/>
                 </LinearGradientBrush>
               </TextBlock.Foreground>
               <TextBlock.Effect>
-                <DropShadowEffect BlurRadius="10" Color="#00A3FF" ShadowDepth="0" Opacity="0.4"/>
+                <DropShadowEffect BlurRadius="12" Color="#00A3FF" ShadowDepth="0" Opacity="0.4"/>
               </TextBlock.Effect>
             </TextBlock>
-            <TextBlock Text="PERFORMANCE ENGINE v5.0" FontSize="11" FontWeight="Medium" Foreground="#60FFFFFF" HorizontalAlignment="Center" Margin="0,6,0,0"/>
-            <Border Height="1.5" Width="70" CornerRadius="1" Background="#00A3FF" Margin="0,16,0,0" HorizontalAlignment="Center">
-              <Border.Effect>
-                <DropShadowEffect BlurRadius="8" Color="#00A3FF" ShadowDepth="0" Opacity="0.5"/>
-              </Border.Effect>
-            </Border>
-          </StackPanel>
+            <TextBlock Text="PERFORMANCE ENGINE v5.0" FontSize="11" FontWeight="Medium" Foreground="#45FFFFFF" HorizontalAlignment="Center" Margin="0,6,0,0"/>
 
-          <TextBlock Grid.Row="1" Text="ENTER ACCESS KEY" FontSize="11" FontWeight="Medium" Foreground="#80D2FF" HorizontalAlignment="Center" Margin="0,24,0,14"/>
-
-          <Grid Grid.Row="2" Name="PassGrid" Width="360" Height="48" Margin="0,0,0,18">
-            <Border CornerRadius="24" BorderThickness="1" BorderBrush="#2000A3FF" Background="#0C0E12">
-              <Border.Effect>
-                <DropShadowEffect BlurRadius="10" Color="#00A3FF" ShadowDepth="0" Opacity="0.25"/>
-              </Border.Effect>
-              <PasswordBox Name="PasswordBox" FontSize="14" FontWeight="Medium" Foreground="#FFFFFF" 
-                          Background="Transparent" BorderThickness="0" Padding="18,0,18,0" 
-                          VerticalAlignment="Center" HorizontalAlignment="Stretch"
-                          PasswordChar="*"/>
-            </Border>
-          </Grid>
-
-          <Grid Grid.Row="3" Name="BtnLoginGrid" Height="48" Margin="0,0,0,0">
-            <Button Name="BtnLogin" Height="48" Width="360" Cursor="Hand" Background="Transparent" BorderThickness="0">
-              <Button.Effect>
-                <DropShadowEffect BlurRadius="16" Color="#00A3FF" ShadowDepth="0" Opacity="0.5"/>
-              </Button.Effect>
-              <Button.Template>
-                <ControlTemplate TargetType="Button">
-                  <Border x:Name="Bd" CornerRadius="24" BorderThickness="1" BorderBrush="#00A3FF">
-                    <Border.Background>
-                      <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
-                        <GradientStop Color="#00A3FF" Offset="0.0"/>
-                        <GradientStop Color="#00E0FF" Offset="1.0"/>
-                      </LinearGradientBrush>
-                    </Border.Background>
-                    <TextBlock Text="LOGIN" FontSize="13" FontWeight="SemiBold" Foreground="#FFFFFF" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                  </Border>
-                  <ControlTemplate.Triggers>
-                    <Trigger Property="IsMouseOver" Value="True">
-                      <Setter TargetName="Bd" Property="BorderBrush" Value="#00E0FF"/>
-                      <Setter TargetName="Bd" Property="Effect">
-                        <Setter.Value>
-                          <DropShadowEffect BlurRadius="20" Color="#00E0FF" ShadowDepth="0" Opacity="0.6"/>
-                        </Setter.Value>
-                      </Setter>
-                    </Trigger>
-                  </ControlTemplate.Triggers>
-                </ControlTemplate>
-              </Button.Template>
-            </Button>
-          </Grid>
-
-          <!-- Login Progress Container (NEW) -->
-          <StackPanel Name="LoginProgContainer" Visibility="Collapsed" Width="360" Grid.Row="2" Grid.RowSpan="2" VerticalAlignment="Center">
-            <TextBlock Name="LoginProgText" Text="Loading system modules..." FontSize="12" FontWeight="SemiBold" Foreground="#80D2FF" HorizontalAlignment="Center" Margin="0,0,0,10"/>
-            <ProgressBar Name="LoginProgBar" Height="8" Minimum="0" Maximum="100" Value="0" Background="#141923" BorderThickness="0">
-              <ProgressBar.Foreground>
+            <!-- Accent Line -->
+            <Border Height="2" Width="60" CornerRadius="1" Margin="0,22,0,0" HorizontalAlignment="Center">
+              <Border.Background>
                 <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
-                  <GradientStop Color="#00A3FF" Offset="0.0"/>
-                  <GradientStop Color="#00E0FF" Offset="1.0"/>
+                  <GradientStop Color="#00A3FF" Offset="0"/>
+                  <GradientStop Color="#00D4FF" Offset="1"/>
                 </LinearGradientBrush>
-              </ProgressBar.Foreground>
-              <ProgressBar.Effect>
-                <DropShadowEffect BlurRadius="8" Color="#00A3FF" ShadowDepth="0" Opacity="0.5"/>
-              </ProgressBar.Effect>
-            </ProgressBar>
+              </Border.Background>
+              <Border.Effect>
+                <DropShadowEffect BlurRadius="10" Color="#00A3FF" ShadowDepth="0" Opacity="0.6"/>
+              </Border.Effect>
+            </Border>
+
+            <!-- Access Key Label -->
+            <TextBlock Text="ENTER ACCESS KEY" FontSize="10" FontWeight="Bold" Foreground="#6B8DA8" HorizontalAlignment="Center" Margin="0,28,0,14"/>
+
+            <!-- Password Field -->
+            <Grid Name="PassGrid" Height="50" Margin="0,0,0,16">
+              <Border CornerRadius="25" BorderThickness="1.5" BorderBrush="#1800A3FF" Background="#0A0D12">
+                <Border.Effect>
+                  <DropShadowEffect BlurRadius="12" Color="#00A3FF" ShadowDepth="0" Opacity="0.15"/>
+                </Border.Effect>
+                <Grid>
+                  <Path Data="M 6,3 L 6,9 M 3,6 L 3,9 L 9,9 L 9,6" Stroke="#3000A3FF" StrokeThickness="1.5" Width="14" Height="14" Stretch="Uniform" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="18,0,0,0"/>
+                  <PasswordBox Name="PasswordBox" FontSize="14" FontWeight="Medium" Foreground="#F0F6FC"
+                              Background="Transparent" BorderThickness="0" Padding="42,0,18,0"
+                              VerticalAlignment="Center" HorizontalAlignment="Stretch"
+                              PasswordChar="&#x25CF;"/>
+                </Grid>
+              </Border>
+            </Grid>
+
+            <!-- Login Button -->
+            <Grid Name="BtnLoginGrid" Height="50">
+              <Button Name="BtnLogin" Height="50" Cursor="Hand" Background="Transparent" BorderThickness="0">
+                <Button.Effect>
+                  <DropShadowEffect BlurRadius="20" Color="#00A3FF" ShadowDepth="0" Opacity="0.45"/>
+                </Button.Effect>
+                <Button.Template>
+                  <ControlTemplate TargetType="Button">
+                    <Border x:Name="Bd" CornerRadius="25" BorderThickness="0">
+                      <Border.Background>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                          <GradientStop Color="#00A3FF" Offset="0.0"/>
+                          <GradientStop Color="#00C8FF" Offset="0.5"/>
+                          <GradientStop Color="#00D4FF" Offset="1.0"/>
+                        </LinearGradientBrush>
+                      </Border.Background>
+                      <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+                        <Path Data="M 5,12 L 10,17 L 19,6" Stroke="#FFFFFF" StrokeThickness="2" Width="12" Height="12" Stretch="Uniform" Margin="0,0,8,0"/>
+                        <TextBlock Text="AUTHENTICATE" FontSize="13" FontWeight="Bold" Foreground="#FFFFFF"/>
+                      </StackPanel>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                      <Trigger Property="IsMouseOver" Value="True">
+                        <Setter TargetName="Bd" Property="Effect">
+                          <Setter.Value>
+                            <DropShadowEffect BlurRadius="24" Color="#00D4FF" ShadowDepth="0" Opacity="0.5"/>
+                          </Setter.Value>
+                        </Setter>
+                      </Trigger>
+                    </ControlTemplate.Triggers>
+                  </ControlTemplate>
+                </Button.Template>
+              </Button>
+            </Grid>
+
+            <!-- Login Progress -->
+            <StackPanel Name="LoginProgContainer" Visibility="Collapsed" Margin="0,20,0,0">
+              <TextBlock Name="LoginProgText" Text="Loading system modules..." FontSize="11" FontWeight="SemiBold" Foreground="#6B8DA8" HorizontalAlignment="Center" Margin="0,0,0,10"/>
+              <ProgressBar Name="LoginProgBar" Height="6" Minimum="0" Maximum="100" Value="0" Background="#0D1117" BorderThickness="0">
+                <ProgressBar.Foreground>
+                  <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                    <GradientStop Color="#00A3FF" Offset="0.0"/>
+                    <GradientStop Color="#00D4FF" Offset="1.0"/>
+                  </LinearGradientBrush>
+                </ProgressBar.Foreground>
+                <ProgressBar.Effect>
+                  <DropShadowEffect BlurRadius="8" Color="#00A3FF" ShadowDepth="0" Opacity="0.5"/>
+                </ProgressBar.Effect>
+              </ProgressBar>
+            </StackPanel>
           </StackPanel>
         </Grid>
 
-        <Grid Name="ViewMain" Visibility="Collapsed" Margin="16,10,16,16">
+        <!-- ==================== MAIN VIEW ==================== -->
+        <Grid Name="ViewMain" Visibility="Collapsed" Margin="14,8,14,14">
           <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="260"/>
+            <ColumnDefinition Width="280"/>
             <ColumnDefinition Width="*"/>
           </Grid.ColumnDefinitions>
 
-          <!-- Left Sidebar: Modes List -->
-          <Grid Grid.Column="0" Margin="0,0,12,0">
+          <!-- ========== LEFT SIDEBAR ========== -->
+          <Border Grid.Column="0" CornerRadius="14" BorderThickness="1" BorderBrush="#0CFFFFFF" Margin="0,0,8,0">
+            <Border.Background>
+              <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                <GradientStop Color="#0C0F14" Offset="0"/>
+                <GradientStop Color="#090C10" Offset="1"/>
+              </LinearGradientBrush>
+            </Border.Background>
+            <Grid Margin="8,10,4,10">
+              <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+              </Grid.RowDefinitions>
+
+              <TextBlock Grid.Row="0" Text="MODE SELECTOR" FontSize="9" FontWeight="Bold" Foreground="#3CFFFFFF" Margin="10,2,0,10"/>
+
+              <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <StackPanel Name="ModeGrid">
+                  <!-- System Analysis Card -->
+                  <Border Name="AnalysisCard" Margin="4,2" Padding="11,9" CornerRadius="10" BorderThickness="1.5" Cursor="Hand">
+                    <Border.BorderBrush>
+                      <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                        <GradientStop Color="#00FFA3" Offset="0"/>
+                        <GradientStop Color="#00D4FF" Offset="1"/>
+                      </LinearGradientBrush>
+                    </Border.BorderBrush>
+                    <Border.Background>
+                      <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                        <GradientStop Color="#0C00FFA3" Offset="0"/>
+                        <GradientStop Color="#0800D4FF" Offset="1"/>
+                      </LinearGradientBrush>
+                    </Border.Background>
+                    <Grid>
+                      <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="26"/>
+                        <ColumnDefinition Width="*"/>
+                      </Grid.ColumnDefinitions>
+                      <Path Grid.Column="0" Data="M 12,12 L 17,17 M 7,12 A 5,5 0 1,1 12,7 A 5,5 0 0,1 7,12 Z" Stroke="#00FFA3" StrokeThickness="1.5" Width="15" Height="15" Stretch="Uniform" VerticalAlignment="Center" HorizontalAlignment="Left"/>
+                      <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                        <TextBlock Text="SYSTEM ANALYSIS" FontSize="11" FontWeight="Bold" Foreground="#00FFA3"/>
+                        <TextBlock Text="Auto-detect and recommend" FontSize="8" Foreground="#6B8DA8" Margin="0,2,0,0"/>
+                      </StackPanel>
+                    </Grid>
+                  </Border>
+
+                  <!-- ── STANDARD ── -->
+                  <StackPanel Orientation="Horizontal" Margin="8,14,0,5">
+                    <Border Height="1" Width="14" Background="#20FFFFFF" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                    <TextBlock Text="STANDARD" FontSize="8.5" FontWeight="Bold" Foreground="#2AFFFFFF"/>
+                  </StackPanel>
+
+                  <Border Name="Mode1Card" Margin="4,2" Padding="11,9" CornerRadius="10" BorderThickness="1.5" BorderBrush="#2ECC71" Background="#082ECC71" Cursor="Hand">
+                    <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="26"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                      <Path Grid.Column="0" Data="M 4,16 C 4,16 6,6 16,4 C 16,4 14,14 4,16 M 4,16 L 12,8" Stroke="#2ECC71" StrokeThickness="1.5" Width="15" Height="15" Stretch="Uniform" VerticalAlignment="Center" HorizontalAlignment="Left"/>
+                      <StackPanel Grid.Column="1" VerticalAlignment="Center"><TextBlock Text="ECO MODE" FontSize="11" FontWeight="Bold" Foreground="#2ECC71"/><TextBlock Text="Low power, energy efficient" FontSize="8" Foreground="#6B8DA8" Margin="0,2,0,0"/></StackPanel>
+                    </Grid>
+                  </Border>
+                  <Border Name="Mode2Card" Margin="4,2" Padding="11,9" CornerRadius="10" BorderThickness="1.5" BorderBrush="#3498DB" Background="#083498DB" Cursor="Hand">
+                    <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="26"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                      <Path Grid.Column="0" Data="M 3,6 L 17,6 M 10,3 L 10,17 M 6,6 L 6,12 C 6,14 14,14 14,12 L 14,6 M 10,17 L 3,17 M 10,17 L 17,17" Stroke="#3498DB" StrokeThickness="1.5" Width="15" Height="15" Stretch="Uniform" VerticalAlignment="Center" HorizontalAlignment="Left"/>
+                      <StackPanel Grid.Column="1" VerticalAlignment="Center"><TextBlock Text="BALANCED" FontSize="11" FontWeight="Bold" Foreground="#3498DB"/><TextBlock Text="Default Windows config" FontSize="8" Foreground="#6B8DA8" Margin="0,2,0,0"/></StackPanel>
+                    </Grid>
+                  </Border>
+                  <Border Name="Mode3Card" Margin="4,2" Padding="11,9" CornerRadius="10" BorderThickness="1.5" BorderBrush="#9B59B6" Background="#089B59B6" Cursor="Hand">
+                    <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="26"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                      <Path Grid.Column="0" Data="M 3,15 A 8,8 0 0,1 17,15 M 10,15 L 13,9 M 10,15 A 1.5,1.5 0 1,1 8.5,13.5" Stroke="#9B59B6" StrokeThickness="1.5" Width="15" Height="15" Stretch="Uniform" VerticalAlignment="Center" HorizontalAlignment="Left"/>
+                      <StackPanel Grid.Column="1" VerticalAlignment="Center"><TextBlock Text="PERFORMANCE" FontSize="11" FontWeight="Bold" Foreground="#9B59B6"/><TextBlock Text="CPU unpark, latency boost" FontSize="8" Foreground="#6B8DA8" Margin="0,2,0,0"/></StackPanel>
+                    </Grid>
+                  </Border>
+                  <Border Name="Mode4Card" Margin="4,2" Padding="11,9" CornerRadius="10" BorderThickness="1.5" BorderBrush="#E67E22" Background="#08E67E22" Cursor="Hand">
+                    <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="26"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                      <Path Grid.Column="0" Data="M 3,4 L 9,10 L 3,16 M 8,4 L 14,10 L 8,16 M 13,4 L 19,10 L 13,16" Stroke="#E67E22" StrokeThickness="1.5" Width="15" Height="15" Stretch="Uniform" VerticalAlignment="Center" HorizontalAlignment="Left"/>
+                      <StackPanel Grid.Column="1" VerticalAlignment="Center"><TextBlock Text="HIGH PERFORMANCE" FontSize="11" FontWeight="Bold" Foreground="#E67E22"/><TextBlock Text="Input delay reduction" FontSize="8" Foreground="#6B8DA8" Margin="0,2,0,0"/></StackPanel>
+                    </Grid>
+                  </Border>
+
+                  <!-- ── COMPETITIVE ── -->
+                  <StackPanel Orientation="Horizontal" Margin="8,14,0,5">
+                    <Border Height="1" Width="14" Background="#20FFFFFF" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                    <TextBlock Text="COMPETITIVE" FontSize="8.5" FontWeight="Bold" Foreground="#2AFFFFFF"/>
+                  </StackPanel>
+
+                  <Border Name="Mode5Card" Margin="4,2" Padding="11,9" CornerRadius="10" BorderThickness="1.5" BorderBrush="#00A3FF" Background="#0800A3FF" Cursor="Hand">
+                    <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="26"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                      <Path Grid.Column="0" Data="M 10,2 L 10,18 M 2,10 L 18,10 M 10,10 A 5,5 0 1,1 5,10 A 5,5 0 0,1 10,10 Z" Stroke="#00A3FF" StrokeThickness="1.5" Width="15" Height="15" Stretch="Uniform" VerticalAlignment="Center" HorizontalAlignment="Left"/>
+                      <StackPanel Grid.Column="1" VerticalAlignment="Center"><TextBlock Text="ULTIMATE" FontSize="11" FontWeight="Bold" Foreground="#00A3FF"/><TextBlock Text="Recommended for gaming" FontSize="8" Foreground="#6B8DA8" Margin="0,2,0,0"/></StackPanel>
+                    </Grid>
+                  </Border>
+                  <Border Name="Mode6Card" Margin="4,2" Padding="11,9" CornerRadius="10" BorderThickness="1.5" BorderBrush="#FF6B35" Background="#08FF6B35" Cursor="Hand">
+                    <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="26"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                      <Path Grid.Column="0" Data="M 13,2 L 5,11 L 11,11 L 7,18 L 15,9 L 9,9 Z" Stroke="#FF6B35" StrokeThickness="1.5" Width="15" Height="15" Stretch="Uniform" VerticalAlignment="Center" HorizontalAlignment="Left"/>
+                      <StackPanel Grid.Column="1" VerticalAlignment="Center"><TextBlock Text="EXTREME" FontSize="11" FontWeight="Bold" Foreground="#FF6B35"/><TextBlock Text="Aggressive network tuning" FontSize="8" Foreground="#6B8DA8" Margin="0,2,0,0"/></StackPanel>
+                    </Grid>
+                  </Border>
+                  <Border Name="Mode7Card" Margin="4,2" Padding="11,9" CornerRadius="10" BorderThickness="1.5" BorderBrush="#FFD700" Background="#08FFD700" Cursor="Hand">
+                    <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="26"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                      <Path Grid.Column="0" Data="M 3,16 L 5,6 L 9,11 L 12,5 L 15,11 L 19,6 L 21,16 Z M 3,16 L 21,16" Stroke="#FFD700" StrokeThickness="1.5" Width="15" Height="15" Stretch="Uniform" VerticalAlignment="Center" HorizontalAlignment="Left"/>
+                      <StackPanel Grid.Column="1" VerticalAlignment="Center"><TextBlock Text="GOD MODE" FontSize="11" FontWeight="Bold" Foreground="#FFD700"/><TextBlock Text="Ultra-low input latency" FontSize="8" Foreground="#6B8DA8" Margin="0,2,0,0"/></StackPanel>
+                    </Grid>
+                  </Border>
+
+                  <!-- ── EXTREME ── -->
+                  <StackPanel Orientation="Horizontal" Margin="8,14,0,5">
+                    <Border Height="1" Width="14" Background="#20FFFFFF" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                    <TextBlock Text="EXTREME" FontSize="8.5" FontWeight="Bold" Foreground="#2AFFFFFF"/>
+                  </StackPanel>
+
+                  <Border Name="Mode8Card" Margin="4,2" Padding="11,9" CornerRadius="10" BorderThickness="1.5" BorderBrush="#E74C3C" Background="#08E74C3C" Cursor="Hand">
+                    <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="26"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                      <Path Grid.Column="0" Data="M 12,2 C 12,2 17,6 17,11 C 17,14 15,16 12,16 C 9,16 7,14 7,11 C 7,6 12,2 12,2 Z M 9,16 L 6,19 M 15,16 L 18,19 M 12,16 L 12,20" Stroke="#E74C3C" StrokeThickness="1.5" Width="15" Height="15" Stretch="Uniform" VerticalAlignment="Center" HorizontalAlignment="Left"/>
+                      <StackPanel Grid.Column="1" VerticalAlignment="Center"><TextBlock Text="OVERDRIVE" FontSize="11" FontWeight="Bold" Foreground="#E74C3C"/><TextBlock Text="Push to absolute limit" FontSize="8" Foreground="#6B8DA8" Margin="0,2,0,0"/></StackPanel>
+                    </Grid>
+                  </Border>
+                  <Border Name="Mode9Card" Margin="4,2" Padding="11,9" CornerRadius="10" BorderThickness="1.5" BorderBrush="#C0392B" Background="#08C0392B" Cursor="Hand">
+                    <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="26"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                      <Path Grid.Column="0" Data="M 10,2 L 18,17 L 2,17 Z M 10,6 L 10,12 M 10,14 L 10,15" Stroke="#C0392B" StrokeThickness="1.5" Width="15" Height="15" Stretch="Uniform" VerticalAlignment="Center" HorizontalAlignment="Left"/>
+                      <StackPanel Grid.Column="1" VerticalAlignment="Center"><TextBlock Text="MAXIMUM" FontSize="11" FontWeight="Bold" Foreground="#C0392B"/><TextBlock Text="Experimental, highest priority" FontSize="8" Foreground="#6B8DA8" Margin="0,2,0,0"/></StackPanel>
+                    </Grid>
+                  </Border>
+                  <Border Name="Mode10Card" Margin="4,2" Padding="11,9" CornerRadius="10" BorderThickness="1.5" BorderBrush="#8E44AD" Background="#088E44AD" Cursor="Hand">
+                    <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="26"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                      <Path Grid.Column="0" Data="M 10,10 A 2,2 0 1,1 8,8 A 2,2 0 0,1 10,10 Z M 10,2 A 8,8 0 1,1 2,10 A 8,8 0 0,1 10,2 Z M 10,2 L 10,6 M 10,14 L 10,18 M 2,10 L 6,10 M 14,10 L 18,10" Stroke="#8E44AD" StrokeThickness="1.5" Width="15" Height="15" Stretch="Uniform" VerticalAlignment="Center" HorizontalAlignment="Left"/>
+                      <StackPanel Grid.Column="1" VerticalAlignment="Center"><TextBlock Text="INSANE" FontSize="11" FontWeight="Bold" Foreground="#8E44AD"/><TextBlock Text="Bypass all limits (risky)" FontSize="8" Foreground="#6B8DA8" Margin="0,2,0,0"/></StackPanel>
+                    </Grid>
+                  </Border>
+
+                  <!-- ── SPECIAL ── -->
+                  <StackPanel Orientation="Horizontal" Margin="8,14,0,5">
+                    <Border Height="1" Width="14" Background="#20FFFFFF" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                    <TextBlock Text="SPECIAL" FontSize="8.5" FontWeight="Bold" Foreground="#2AFFFFFF"/>
+                  </StackPanel>
+
+                  <Border Name="Mode11Card" Margin="4,2" Padding="11,9" CornerRadius="10" BorderThickness="1.5" BorderBrush="#FF2A6D" Background="#08FF2A6D" Cursor="Hand">
+                    <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="26"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                      <Path Grid.Column="0" Data="M 12,3 L 4,6 L 4,11 C 4,16 12,21 12,21 C 12,21 20,16 20,11 L 20,6 Z" Stroke="#FF2A6D" StrokeThickness="1.5" Width="15" Height="15" Stretch="Uniform" VerticalAlignment="Center" HorizontalAlignment="Left"/>
+                      <StackPanel Grid.Column="1" VerticalAlignment="Center"><TextBlock Text="SAFE PLAY" FontSize="11" FontWeight="Bold" Foreground="#FF2A6D"/><TextBlock Text="100% game compatible" FontSize="8" Foreground="#6B8DA8" Margin="0,2,0,0"/></StackPanel>
+                    </Grid>
+                  </Border>
+                  <Border Name="Mode12Card" Margin="4,2" Padding="11,9" CornerRadius="10" BorderThickness="1.5" BorderBrush="#E0A96D" Background="#08E0A96D" Cursor="Hand">
+                    <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="26"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                      <Path Grid.Column="0" Data="M 12,2 L 15,9 L 22,9 L 16,14 L 18,21 L 12,17 L 6,21 L 8,14 L 2,9 L 9,9 Z" Stroke="#E0A96D" StrokeThickness="1.5" Width="15" Height="15" Stretch="Uniform" VerticalAlignment="Center" HorizontalAlignment="Left"/>
+                      <StackPanel Grid.Column="1" VerticalAlignment="Center"><TextBlock Text="VIP MODE" FontSize="11" FontWeight="Bold" Foreground="#E0A96D"/><TextBlock Text="Premium elite optimization" FontSize="8" Foreground="#6B8DA8" Margin="0,2,0,0"/></StackPanel>
+                    </Grid>
+                  </Border>
+                  <Border Name="Mode13Card" Margin="4,2" Padding="11,9" CornerRadius="10" BorderThickness="1.5" BorderBrush="#00FFD2" Background="#0800FFD2" Cursor="Hand">
+                    <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="26"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                      <Path Grid.Column="0" Data="M 3,13 L 10,6 L 17,13 M 3,18 L 10,11 L 17,18" Stroke="#00FFD2" StrokeThickness="1.5" Width="15" Height="15" Stretch="Uniform" VerticalAlignment="Center" HorizontalAlignment="Left"/>
+                      <StackPanel Grid.Column="1" VerticalAlignment="Center"><TextBlock Text="FPS BOOST" FontSize="11" FontWeight="Bold" Foreground="#00FFD2"/><TextBlock Text="Frame rate focus, no registry" FontSize="8" Foreground="#6B8DA8" Margin="0,2,0,0"/></StackPanel>
+                    </Grid>
+                  </Border>
+                  <Border Name="Mode14Card" Margin="4,2" Padding="11,9" CornerRadius="10" BorderThickness="1.5" BorderBrush="#FF00EA" Background="#08FF00EA" Cursor="Hand">
+                    <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="26"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                      <Path Grid.Column="0" Data="M 2,6 H 15 V 19 H 2 Z M 6,2 H 19 V 15" Stroke="#FF00EA" StrokeThickness="1.5" Width="15" Height="15" Stretch="Uniform" VerticalAlignment="Center" HorizontalAlignment="Left"/>
+                      <StackPanel Grid.Column="1" VerticalAlignment="Center"><TextBlock Text="FRAME GEN BOOST" FontSize="11" FontWeight="Bold" Foreground="#FF00EA"/><TextBlock Text="HAGS + DXGI frame gen" FontSize="8" Foreground="#6B8DA8" Margin="0,2,0,0"/></StackPanel>
+                    </Grid>
+                  </Border>
+                  <Border Name="Mode15Card" Margin="4,2" Padding="11,9" CornerRadius="10" BorderThickness="1.5" BorderBrush="#00FF87" Background="#0800FF87" Cursor="Hand">
+                    <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="26"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                      <Path Grid.Column="0" Data="M 2,12 L 8,12 L 11,5 L 14,19 L 17,12 L 22,12" Stroke="#00FF87" StrokeThickness="2" Width="15" Height="15" Stretch="Uniform" VerticalAlignment="Center" HorizontalAlignment="Left"/>
+                      <StackPanel Grid.Column="1" VerticalAlignment="Center"><TextBlock Text="TCP DESYNC BOOSTER" FontSize="11" FontWeight="Bold" Foreground="#00FF87"/><TextBlock Text="Ultra low-latency network" FontSize="8" Foreground="#6B8DA8" Margin="0,2,0,0"/></StackPanel>
+                    </Grid>
+                  </Border>
+                </StackPanel>
+              </ScrollViewer>
+            </Grid>
+          </Border>
+
+          <!-- ========== RIGHT PANEL ========== -->
+          <Grid Grid.Column="1" Margin="8,0,0,0">
             <Grid.RowDefinitions>
+              <RowDefinition Height="Auto"/>
+              <RowDefinition Height="Auto"/>
+              <RowDefinition Height="Auto"/>
               <RowDefinition Height="Auto"/>
               <RowDefinition Height="*"/>
             </Grid.RowDefinitions>
-            
-            <TextBlock Grid.Row="0" Text="OPTIMIZATION MODES" FontSize="9" FontWeight="Bold" Foreground="#50FFFFFF" Margin="6,0,0,10"/>
-            
-            <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-              <StackPanel Name="ModeGrid">
-                <!-- Analysis Card -->
-                <Border Name="AnalysisCard" Margin="4,3" Padding="10,8" CornerRadius="10" BorderThickness="1.5" BorderBrush="#00FFA3" Background="#0A00FFA3" Cursor="Hand">
-                  <Grid>
-                    <Grid.ColumnDefinitions>
-                      <ColumnDefinition Width="24"/>
-                      <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
-                    <Path Grid.Column="0" Data="M 12,12 L 17,17 M 7,12 A 5,5 0 1,1 12,7 A 5,5 0 0,1 7,12 Z" Stroke="#00FFA3" StrokeThickness="1.5" Width="14" Height="14" Stretch="Uniform" VerticalAlignment="Center" HorizontalAlignment="Left"/>
-                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                      <TextBlock Text="SYSTEM ANALYSIS" FontSize="11" FontWeight="Bold" Foreground="#00FFA3"/>
-                      <TextBlock Text="Hardware diagnostics and recommendation" FontSize="8" Foreground="#80FFFFFF" Margin="0,2,0,0"/>
-                    </StackPanel>
-                  </Grid>
-                </Border>
-                <!-- Mode 1 -->
-                <Border Name="Mode1Card" Margin="4,3" Padding="10,8" CornerRadius="10" BorderThickness="1" BorderBrush="#2ECC71" Background="#0A2ECC71" Cursor="Hand">
-                  <Grid>
-                    <Grid.ColumnDefinitions>
-                      <ColumnDefinition Width="24"/>
-                      <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
-                    <Path Grid.Column="0" Data="M 4,16 C 4,16 6,6 16,4 C 16,4 14,14 4,16 M 4,16 L 12,8" Stroke="#2ECC71" StrokeThickness="1.5" Width="14" Height="14" Stretch="Uniform" VerticalAlignment="Center" HorizontalAlignment="Left"/>
-                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                      <TextBlock Text="ECO MODE" FontSize="11" FontWeight="Bold" Foreground="#2ECC71"/>
-                      <TextBlock Text="Low Power and Efficiency" FontSize="8" Foreground="#80FFFFFF" Margin="0,2,0,0"/>
-                    </StackPanel>
-                  </Grid>
-                </Border>
-                <!-- Mode 2 -->
-                <Border Name="Mode2Card" Margin="4,3" Padding="10,8" CornerRadius="10" BorderThickness="1" BorderBrush="#3498DB" Background="#0A3498DB" Cursor="Hand">
-                  <Grid>
-                    <Grid.ColumnDefinitions>
-                      <ColumnDefinition Width="24"/>
-                      <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
-                    <Path Grid.Column="0" Data="M 3,6 L 17,6 M 10,3 L 10,17 M 6,6 L 6,12 C 6,14 14,14 14,12 L 14,6 M 10,17 L 3,17 M 10,17 L 17,17" Stroke="#3498DB" StrokeThickness="1.5" Width="14" Height="14" Stretch="Uniform" VerticalAlignment="Center" HorizontalAlignment="Left"/>
-                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                      <TextBlock Text="BALANCED" FontSize="11" FontWeight="Bold" Foreground="#3498DB"/>
-                      <TextBlock Text="Standard daily configuration" FontSize="8" Foreground="#80FFFFFF" Margin="0,2,0,0"/>
-                    </StackPanel>
-                  </Grid>
-                </Border>
-                <!-- Mode 3 -->
-                <Border Name="Mode3Card" Margin="4,3" Padding="10,8" CornerRadius="10" BorderThickness="1" BorderBrush="#9B59B6" Background="#0A9B59B6" Cursor="Hand">
-                  <Grid>
-                    <Grid.ColumnDefinitions>
-                      <ColumnDefinition Width="24"/>
-                      <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
-                    <Path Grid.Column="0" Data="M 3,15 A 8,8 0 0,1 17,15 M 10,15 L 13,9 M 10,15 A 1.5,1.5 0 1,1 8.5,13.5" Stroke="#9B59B6" StrokeThickness="1.5" Width="14" Height="14" Stretch="Uniform" VerticalAlignment="Center" HorizontalAlignment="Left"/>
-                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                      <TextBlock Text="PERFORMANCE" FontSize="11" FontWeight="Bold" Foreground="#9B59B6"/>
-                      <TextBlock Text="Optimized gaming latency" FontSize="8" Foreground="#80FFFFFF" Margin="0,2,0,0"/>
-                    </StackPanel>
-                  </Grid>
-                </Border>
-                <!-- Mode 4 -->
-                <Border Name="Mode4Card" Margin="4,3" Padding="10,8" CornerRadius="10" BorderThickness="1" BorderBrush="#E67E22" Background="#0AE67E22" Cursor="Hand">
-                  <Grid>
-                    <Grid.ColumnDefinitions>
-                      <ColumnDefinition Width="24"/>
-                      <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
-                    <Path Grid.Column="0" Data="M 3,4 L 9,10 L 3,16 M 8,4 L 14,10 L 8,16 M 13,4 L 19,10 L 13,16" Stroke="#E67E22" StrokeThickness="1.5" Width="14" Height="14" Stretch="Uniform" VerticalAlignment="Center" HorizontalAlignment="Left"/>
-                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                      <TextBlock Text="HIGH PERFORMANCE" FontSize="11" FontWeight="Bold" Foreground="#E67E22"/>
-                      <TextBlock Text="Competitive scheduling boost" FontSize="8" Foreground="#80FFFFFF" Margin="0,2,0,0"/>
-                    </StackPanel>
-                  </Grid>
-                </Border>
-                <!-- Mode 5 -->
-                <Border Name="Mode5Card" Margin="4,3" Padding="10,8" CornerRadius="10" BorderThickness="1.5" BorderBrush="#00A3FF" Background="#1200A3FF" Cursor="Hand">
-                  <Grid>
-                    <Grid.ColumnDefinitions>
-                      <ColumnDefinition Width="24"/>
-                      <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
-                    <Path Grid.Column="0" Data="M 10,2 L 10,18 M 2,10 L 18,10 M 10,10 A 5,5 0 1,1 5,10 A 5,5 0 0,1 10,10 Z" Stroke="#00A3FF" StrokeThickness="1.5" Width="14" Height="14" Stretch="Uniform" VerticalAlignment="Center" HorizontalAlignment="Left"/>
-                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                      <TextBlock Text="ULTIMATE" FontSize="11" FontWeight="Bold" Foreground="#00A3FF"/>
-                      <TextBlock Text="Recommended profile" FontSize="8" Foreground="#80FFFFFF" Margin="0,2,0,0"/>
-                    </StackPanel>
-                  </Grid>
-                </Border>
-                <!-- Mode 6 -->
-                <Border Name="Mode6Card" Margin="4,3" Padding="10,8" CornerRadius="10" BorderThickness="1" BorderBrush="#FF6B35" Background="#0AFF6B35" Cursor="Hand">
-                  <Grid>
-                    <Grid.ColumnDefinitions>
-                      <ColumnDefinition Width="24"/>
-                      <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
-                    <Path Grid.Column="0" Data="M 13,2 L 5,11 L 11,11 L 7,18 L 15,9 L 9,9 Z" Stroke="#FF6B35" StrokeThickness="1.5" Width="14" Height="14" Stretch="Uniform" VerticalAlignment="Center" HorizontalAlignment="Left"/>
-                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                      <TextBlock Text="EXTREME" FontSize="11" FontWeight="Bold" Foreground="#FF6B35"/>
-                      <TextBlock Text="Forced maximum preferences" FontSize="8" Foreground="#80FFFFFF" Margin="0,2,0,0"/>
-                    </StackPanel>
-                  </Grid>
-                </Border>
-                <!-- Mode 7 -->
-                <Border Name="Mode7Card" Margin="4,3" Padding="10,8" CornerRadius="10" BorderThickness="1" BorderBrush="#FFD700" Background="#0AFFD700" Cursor="Hand">
-                  <Grid>
-                    <Grid.ColumnDefinitions>
-                      <ColumnDefinition Width="24"/>
-                      <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
-                    <Path Grid.Column="0" Data="M 3,16 L 5,6 L 9,11 L 12,5 L 15,11 L 19,6 L 21,16 Z M 3,16 L 21,16" Stroke="#FFD700" StrokeThickness="1.5" Width="14" Height="14" Stretch="Uniform" VerticalAlignment="Center" HorizontalAlignment="Left"/>
-                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                      <TextBlock Text="GOD MODE" FontSize="11" FontWeight="Bold" Foreground="#FFD700"/>
-                      <TextBlock Text="Enthusiast-level optimizations" FontSize="8" Foreground="#80FFFFFF" Margin="0,2,0,0"/>
-                    </StackPanel>
-                  </Grid>
-                </Border>
-                <!-- Mode 8 -->
-                <Border Name="Mode8Card" Margin="4,3" Padding="10,8" CornerRadius="10" BorderThickness="1" BorderBrush="#E74C3C" Background="#0AE74C3C" Cursor="Hand">
-                  <Grid>
-                    <Grid.ColumnDefinitions>
-                      <ColumnDefinition Width="24"/>
-                      <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
-                    <Path Grid.Column="0" Data="M 12,2 C 12,2 17,6 17,11 C 17,14 15,16 12,16 C 9,16 7,14 7,11 C 7,6 12,2 12,2 Z M 9,16 L 6,19 M 15,16 L 18,19 M 12,16 L 12,20" Stroke="#E74C3C" StrokeThickness="1.5" Width="14" Height="14" Stretch="Uniform" VerticalAlignment="Center" HorizontalAlignment="Left"/>
-                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                      <TextBlock Text="OVERDRIVE" FontSize="11" FontWeight="Bold" Foreground="#E74C3C"/>
-                      <TextBlock Text="Maximum hardware latency" FontSize="8" Foreground="#80FFFFFF" Margin="0,2,0,0"/>
-                    </StackPanel>
-                  </Grid>
-                </Border>
-                <!-- Mode 9 -->
-                <Border Name="Mode9Card" Margin="4,3" Padding="10,8" CornerRadius="10" BorderThickness="1" BorderBrush="#C0392B" Background="#0AC0392B" Cursor="Hand">
-                  <Grid>
-                    <Grid.ColumnDefinitions>
-                      <ColumnDefinition Width="24"/>
-                      <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
-                    <Path Grid.Column="0" Data="M 10,2 L 18,17 L 2,17 Z M 10,6 L 10,12 M 10,14 L 10,15" Stroke="#C0392B" StrokeThickness="1.5" Width="14" Height="14" Stretch="Uniform" VerticalAlignment="Center" HorizontalAlignment="Left"/>
-                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                      <TextBlock Text="MAXIMUM" FontSize="11" FontWeight="Bold" Foreground="#C0392B"/>
-                      <TextBlock Text="Thread-level aggressive scheduling" FontSize="8" Foreground="#80FFFFFF" Margin="0,2,0,0"/>
-                    </StackPanel>
-                  </Grid>
-                </Border>
-                <!-- Mode 10 -->
-                <Border Name="Mode10Card" Margin="4,3" Padding="10,8" CornerRadius="10" BorderThickness="1" BorderBrush="#8E44AD" Background="#0A8E44AD" Cursor="Hand">
-                  <Grid>
-                    <Grid.ColumnDefinitions>
-                      <ColumnDefinition Width="24"/>
-                      <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
-                    <Path Grid.Column="0" Data="M 10,10 A 2,2 0 1,1 8,8 A 2,2 0 0,1 10,10 Z M 10,2 A 8,8 0 1,1 2,10 A 8,8 0 0,1 10,2 Z M 10,2 L 10,6 M 10,14 L 10,18 M 2,10 L 6,10 M 14,10 L 18,10" Stroke="#8E44AD" StrokeThickness="1.5" Width="14" Height="14" Stretch="Uniform" VerticalAlignment="Center" HorizontalAlignment="Left"/>
-                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                      <TextBlock Text="INSANE" FontSize="11" FontWeight="Bold" Foreground="#8E44AD"/>
-                      <TextBlock Text="Unconstrained system limits" FontSize="8" Foreground="#80FFFFFF" Margin="0,2,0,0"/>
-                    </StackPanel>
-                  </Grid>
-                </Border>
-                <!-- Mode 11 -->
-                <Border Name="Mode11Card" Margin="4,3" Padding="10,8" CornerRadius="10" BorderThickness="1" BorderBrush="#FF2A6D" Background="#0AFF2A6D" Cursor="Hand">
-                  <Grid>
-                    <Grid.ColumnDefinitions>
-                      <ColumnDefinition Width="24"/>
-                      <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
-                    <Path Grid.Column="0" Data="M 12,3 L 4,6 L 4,11 C 4,16 12,21 12,21 C 12,21 20,16 20,11 L 20,6 Z" Stroke="#FF2A6D" StrokeThickness="1.5" Width="14" Height="14" Stretch="Uniform" VerticalAlignment="Center" HorizontalAlignment="Left"/>
-                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                      <TextBlock Text="SAFE PLAY" FontSize="11" FontWeight="Bold" Foreground="#FF2A6D"/>
-                      <TextBlock Text="Full compatibility and safety" FontSize="8" Foreground="#80FFFFFF" Margin="0,2,0,0"/>
-                    </StackPanel>
-                  </Grid>
-                </Border>
-                <!-- Mode 12 -->
-                <Border Name="Mode12Card" Margin="4,3" Padding="10,8" CornerRadius="10" BorderThickness="1" BorderBrush="#E0A96D" Background="#0AE0A96D" Cursor="Hand">
-                  <Grid>
-                    <Grid.ColumnDefinitions>
-                      <ColumnDefinition Width="24"/>
-                      <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
-                    <Path Grid.Column="0" Data="M 12,2 L 15,9 L 22,9 L 16,14 L 18,21 L 12,17 L 6,21 L 8,14 L 2,9 L 9,9 Z" Stroke="#E0A96D" StrokeThickness="1.5" Width="14" Height="14" Stretch="Uniform" VerticalAlignment="Center" HorizontalAlignment="Left"/>
-                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                      <TextBlock Text="MINISHAWTY PROJECT VIP" FontSize="11" FontWeight="Bold" Foreground="#E0A96D"/>
-                      <TextBlock Text="Exclusive VIP tuning and response" FontSize="8" Foreground="#80FFFFFF" Margin="0,2,0,0"/>
-                    </StackPanel>
-                  </Grid>
-                </Border>
-                <!-- Mode 13 -->
-                <Border Name="Mode13Card" Margin="4,3" Padding="10,8" CornerRadius="10" BorderThickness="1.5" BorderBrush="#00FFD2" Background="#1200FFD2" Cursor="Hand">
-                  <Grid>
-                    <Grid.ColumnDefinitions>
-                      <ColumnDefinition Width="24"/>
-                      <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
-                    <Path Grid.Column="0" Data="M 3,13 L 10,6 L 17,13 M 3,18 L 10,11 L 17,18" Stroke="#00FFD2" StrokeThickness="2" Width="14" Height="14" Stretch="Uniform" VerticalAlignment="Center" HorizontalAlignment="Left"/>
-                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                      <TextBlock Text="FPS BOOST" FontSize="11" FontWeight="Bold" Foreground="#00FFD2"/>
-                      <TextBlock Text="Frame booster (No Registry tweaks)" FontSize="8" Foreground="#80FFFFFF" Margin="0,2,0,0"/>
-                    </StackPanel>
-                  </Grid>
-                </Border>
-                <!-- Mode 14 -->
-                <Border Name="Mode14Card" Margin="4,3" Padding="10,8" CornerRadius="10" BorderThickness="1.5" BorderBrush="#FF00EA" Background="#12FF00EA" Cursor="Hand">
-                  <Grid>
-                    <Grid.ColumnDefinitions>
-                      <ColumnDefinition Width="24"/>
-                      <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
-                    <Path Grid.Column="0" Data="M 2,6 H 15 V 19 H 2 Z M 6,2 H 19 V 15" Stroke="#FF00EA" StrokeThickness="1.5" Width="14" Height="14" Stretch="Uniform" VerticalAlignment="Center" HorizontalAlignment="Left"/>
-                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                      <TextBlock Text="FRAME GEN BOOST" FontSize="11" FontWeight="Bold" Foreground="#FF00EA"/>
-                      <TextBlock Text="Hardware-accelerated frame generator" FontSize="8" Foreground="#80FFFFFF" Margin="0,2,0,0"/>
-                    </StackPanel>
-                  </Grid>
-                </Border>
-              </StackPanel>
-            </ScrollViewer>
-          </Grid>
 
-          <!-- Right Panel: Dashboard and Actions -->
-          <Grid Grid.Column="1" Margin="12,0,0,0">
-            <Grid.RowDefinitions>
-              <RowDefinition Height="Auto"/>    <!-- Header Title -->
-              <RowDefinition Height="Auto"/>    <!-- Selected Mode Name / Description -->
-              <RowDefinition Height="Auto"/>    <!-- Feature Tags -->
-              <RowDefinition Height="Auto"/>    <!-- Side-by-Side Action Buttons -->
-              <RowDefinition Height="*"/>       <!-- System Diagnostic Log -->
-            </Grid.RowDefinitions>
-            
-            <!-- Header Title -->
+            <!-- Zone 1: Status Bar -->
             <Grid Grid.Row="0" Margin="0,0,0,12">
               <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
               </Grid.ColumnDefinitions>
               <StackPanel Grid.Column="0">
-                <TextBlock Text="MINISHAWTY PROJECT v5" FontSize="16" FontWeight="SemiBold" Foreground="#00A3FF">
+                <TextBlock Text="PERFORMANCE DASHBOARD" FontSize="17" FontWeight="Bold" Foreground="#F0F6FC">
                   <TextBlock.Effect>
-                    <DropShadowEffect BlurRadius="10" Color="#00A3FF" ShadowDepth="0" Opacity="0.5"/>
+                    <DropShadowEffect BlurRadius="8" Color="#00A3FF" ShadowDepth="0" Opacity="0.3"/>
                   </TextBlock.Effect>
                 </TextBlock>
-                <TextBlock Text="PERFORMANCE ENGINE DASHBOARD" FontSize="8" FontWeight="Medium" Foreground="#50FFFFFF" Margin="0,2,0,0"/>
+                <TextBlock Text="Select a mode and launch optimization" FontSize="9" FontWeight="Medium" Foreground="#3CFFFFFF" Margin="0,3,0,0"/>
               </StackPanel>
-              <!-- Current Mode Badge in Column 1 -->
-              <Border Grid.Column="1" Name="CurrentModeBadge" CornerRadius="12" Padding="12,5" BorderThickness="1.5" BorderBrush="#FF4A4A" Background="#15FF4A4A" VerticalAlignment="Center">
+              <Border Grid.Column="1" Name="CurrentModeBadge" CornerRadius="10" Padding="14,6" BorderThickness="1.5" BorderBrush="#FF4757" Background="#12FF4757" VerticalAlignment="Center">
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                  <TextBlock Text="CURRENT: " FontSize="8" FontWeight="Bold" Foreground="#80FFFFFF" VerticalAlignment="Center"/>
-                  <TextBlock Name="CurrentModeText" Text="NO SETTING" FontSize="9.5" FontWeight="Bold" Foreground="#FF4A4A" VerticalAlignment="Center"/>
+                  <TextBlock Text="ACTIVE: " FontSize="8" FontWeight="Bold" Foreground="#6B8DA8" VerticalAlignment="Center"/>
+                  <TextBlock Name="CurrentModeText" Text="NO SETTING" FontSize="9.5" FontWeight="Bold" Foreground="#FF4757" VerticalAlignment="Center"/>
                 </StackPanel>
               </Border>
             </Grid>
-            
-            <!-- Selected Mode Description -->
-            <Border Grid.Row="1" CornerRadius="10" BorderThickness="1" BorderBrush="#1500A3FF" Background="#080C0E12" Padding="12,10" Margin="0,0,0,10">
+
+            <!-- Zone 2: Mode Detail Card -->
+            <Border Grid.Row="1" CornerRadius="12" BorderThickness="1" BorderBrush="#0EFFFFFF" Padding="16,14" Margin="0,0,0,10">
+              <Border.Background>
+                <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                  <GradientStop Color="#0C0F14" Offset="0"/>
+                  <GradientStop Color="#090C10" Offset="1"/>
+                </LinearGradientBrush>
+              </Border.Background>
               <Grid>
                 <Grid.ColumnDefinitions>
                   <ColumnDefinition Width="Auto"/>
                   <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
-                <!-- Large Dynamic Icon in Column 0 -->
-                <Viewbox Grid.Column="0" Width="28" Height="28" Margin="0,0,14,0" VerticalAlignment="Center">
-                  <Path Name="SelectedModeIcon" Data="M 10,2 L 10,18 M 2,10 L 18,10 M 10,10 A 5,5 0 1,1 5,10 A 5,5 0 0,1 10,10 Z" Stroke="#00A3FF" StrokeThickness="1.5" Stretch="Uniform"/>
-                </Viewbox>
-                <!-- Text elements in Column 1 -->
-                <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                  <TextBlock Text="SELECTED MODE PROFILE" FontSize="8" FontWeight="Bold" Foreground="#40FFFFFF" Margin="0,0,0,6"/>
-                  <TextBlock Name="ModeDescription" Text="Ultimate: Recommended for most users - Balanced performance and stability" 
-                             FontSize="10.5" FontWeight="Medium" Foreground="#CCFFFFFF" TextWrapping="Wrap"/>
-                  <TextBlock Name="GameLaunchStatus" Text="Game Launch: Supported" FontSize="10.5" FontWeight="Bold" Foreground="#00FFA3" Margin="0,5,0,0"/>
+                <Border Grid.Column="0" Width="48" Height="48" CornerRadius="12" Background="#0C00A3FF" Margin="0,0,16,0" VerticalAlignment="Top">
+                  <Viewbox Width="24" Height="24">
+                    <Path Name="SelectedModeIcon" Data="M 10,2 L 10,18 M 2,10 L 18,10 M 10,10 A 5,5 0 1,1 5,10 A 5,5 0 0,1 10,10 Z" Stroke="#00A3FF" StrokeThickness="1.5" Stretch="Uniform"/>
+                  </Viewbox>
+                </Border>
+                <StackPanel Grid.Column="1" VerticalAlignment="Top">
+                  <TextBlock Text="SELECTED MODE" FontSize="8" FontWeight="Bold" Foreground="#3000A3FF" Margin="0,0,0,5"/>
+                  <TextBlock Name="ModeDescription" Text="Select a mode from the sidebar to view its details and configuration."
+                             FontSize="11" FontWeight="Medium" Foreground="#C0D0DD" TextWrapping="Wrap" LineHeight="18"/>
+                  <TextBlock Name="GameLaunchStatus" Text="Game Launch: Supported" FontSize="10.5" FontWeight="Bold" Foreground="#00FFA3" Margin="0,8,0,0"/>
                 </StackPanel>
               </Grid>
             </Border>
-            
-            <!-- Feature Tags -->
-            <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled" Margin="0,0,0,10" MaxHeight="45">
-              <WrapPanel Name="FeatureTags">
-                <!-- Statically added initial tags (will be overwritten by Select-Mode) -->
-              </WrapPanel>
+
+            <!-- Zone 2b: Feature Tags -->
+            <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled" Margin="0,0,0,10" MaxHeight="48">
+              <WrapPanel Name="FeatureTags"/>
             </ScrollViewer>
-            
-            <!-- Side-by-Side Action Buttons -->
+
+            <!-- Zone 3: Action Buttons -->
             <Grid Grid.Row="3" Margin="0,0,0,10">
               <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="2*"/>
                 <ColumnDefinition Width="10"/>
                 <ColumnDefinition Width="1*"/>
               </Grid.ColumnDefinitions>
-              
-              <!-- Launch button -->
-              <Button Name="BtnLaunch" Grid.Column="0" Height="40" Cursor="Hand" Background="Transparent" BorderThickness="0">
+
+              <Button Name="BtnLaunch" Grid.Column="0" Height="44" Cursor="Hand" Background="Transparent" BorderThickness="0">
                 <Button.Effect>
-                  <DropShadowEffect x:Name="BtnGlow" BlurRadius="12" Color="#00A3FF" ShadowDepth="0" Opacity="0.4"/>
+                  <DropShadowEffect x:Name="BtnGlow" BlurRadius="14" Color="#00A3FF" ShadowDepth="0" Opacity="0.4"/>
                 </Button.Effect>
                 <Button.Template>
                   <ControlTemplate TargetType="Button">
-                    <Border x:Name="Bd" CornerRadius="8" BorderThickness="1.5" BorderBrush="#00A3FF">
+                    <Border x:Name="Bd" CornerRadius="10" BorderThickness="0">
                       <Border.Background>
                         <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
                           <GradientStop Color="#00A3FF" Offset="0.0"/>
-                          <GradientStop Color="#00E0FF" Offset="1.0"/>
+                          <GradientStop Color="#00C8FF" Offset="0.5"/>
+                          <GradientStop Color="#00D4FF" Offset="1.0"/>
                         </LinearGradientBrush>
                       </Border.Background>
-                      <TextBlock Name="BtnText" Text="LAUNCH OPTIMIZATION" FontSize="11.5" FontWeight="Bold" Foreground="#FFFFFF" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                      <TextBlock Name="BtnText" Text="LAUNCH OPTIMIZATION" FontSize="12" FontWeight="Bold" Foreground="#FFFFFF" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                     </Border>
                     <ControlTemplate.Triggers>
                       <Trigger Property="IsMouseOver" Value="True">
                         <Setter TargetName="Bd" Property="Effect">
                           <Setter.Value>
-                            <DropShadowEffect BlurRadius="18" Color="#00E0FF" ShadowDepth="0" Opacity="0.6"/>
+                            <DropShadowEffect BlurRadius="20" Color="#00D4FF" ShadowDepth="0" Opacity="0.55"/>
                           </Setter.Value>
                         </Setter>
                       </Trigger>
                       <Trigger Property="IsEnabled" Value="False">
-                        <Setter TargetName="Bd" Property="Opacity" Value="0.4"/>
+                        <Setter TargetName="Bd" Property="Opacity" Value="0.35"/>
                       </Trigger>
                     </ControlTemplate.Triggers>
                   </ControlTemplate>
                 </Button.Template>
               </Button>
-              
-              <!-- Restore button -->
-              <Button Name="BtnRestore" Grid.Column="2" Height="40" Cursor="Hand" Background="Transparent" BorderThickness="0">
+
+              <Button Name="BtnRestore" Grid.Column="2" Height="44" Cursor="Hand" Background="Transparent" BorderThickness="0">
                 <Button.Effect>
-                  <DropShadowEffect BlurRadius="10" Color="#FF6B35" ShadowDepth="0" Opacity="0.3"/>
+                  <DropShadowEffect BlurRadius="10" Color="#FF7B3D" ShadowDepth="0" Opacity="0.25"/>
                 </Button.Effect>
                 <Button.Template>
                   <ControlTemplate TargetType="Button">
-                    <Border x:Name="Bd" CornerRadius="8" BorderThickness="1" BorderBrush="#FF6B35">
+                    <Border x:Name="Bd" CornerRadius="10" BorderThickness="1.5" BorderBrush="#FF7B3D">
                       <Border.Background>
                         <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                          <GradientStop Color="#1AFF6B35" Offset="0"/>
+                          <GradientStop Color="#15FF7B3D" Offset="0"/>
                           <GradientStop Color="#05000000" Offset="1"/>
                         </LinearGradientBrush>
                       </Border.Background>
                       <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
-                        <Path Data="M 13.5,8 A 5.5,5.5 0 1,1 12.1,4.1 M 12,1 L 12,4.5 L 8.5,4.5" Stroke="#FF6B35" StrokeThickness="1.5" Width="14" Height="14" Stretch="Uniform" Margin="0,0,6,0" VerticalAlignment="Center"/>
-                        <TextBlock Name="BtnRestoreText" Text="RESTORE" FontSize="10.5" FontWeight="Bold" Foreground="#CCFFFFFF" VerticalAlignment="Center"/>
+                        <Path Data="M 13.5,8 A 5.5,5.5 0 1,1 12.1,4.1 M 12,1 L 12,4.5 L 8.5,4.5" Stroke="#FF7B3D" StrokeThickness="1.5" Width="14" Height="14" Stretch="Uniform" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                        <TextBlock Name="BtnRestoreText" Text="RESTORE" FontSize="10.5" FontWeight="Bold" Foreground="#C8D0DA" VerticalAlignment="Center"/>
                       </StackPanel>
                     </Border>
                     <ControlTemplate.Triggers>
                       <Trigger Property="IsMouseOver" Value="True">
-                        <Setter TargetName="Bd" Property="Background" Value="#33FF6B35"/>
-                        <Setter TargetName="Bd" Property="BorderBrush" Value="#FF9B6B"/>
+                        <Setter TargetName="Bd" Property="Background" Value="#28FF7B3D"/>
+                        <Setter TargetName="Bd" Property="BorderBrush" Value="#FFB088"/>
                       </Trigger>
                       <Trigger Property="IsEnabled" Value="False">
                         <Setter TargetName="Bd" Property="Opacity" Value="0.3"/>
@@ -1371,101 +1401,118 @@ function Get-SystemSpecs {
                 </Button.Template>
               </Button>
             </Grid>
-            
-            <!-- System Diagnostic Log -->
-            <Grid Grid.Row="4" Margin="0,4,0,0">
+
+            <!-- Zone 4: Log Panel -->
+            <Grid Grid.Row="4">
               <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="*"/>
               </Grid.RowDefinitions>
-              
-              <TextBlock Grid.Row="0" Text="SYSTEM DIAGNOSTIC LOG" FontSize="8" FontWeight="Bold" Foreground="#40FFFFFF" Margin="4,0,0,4"/>
-              
-              <ProgressBar Name="ProgBar" Grid.Row="1" Height="2" IsIndeterminate="True" Visibility="Collapsed" BorderThickness="0" Background="#0D0F12" Margin="4,0,4,6">
+
+              <TextBlock Grid.Row="0" Text="SYSTEM DIAGNOSTIC LOG" FontSize="8.5" FontWeight="Bold" Foreground="#2AFFFFFF" Margin="4,0,0,5"/>
+
+              <ProgressBar Name="ProgBar" Grid.Row="1" Height="2" IsIndeterminate="True" Visibility="Collapsed" BorderThickness="0" Background="#0D1117" Margin="4,0,4,6">
                 <ProgressBar.Foreground>
                   <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
                     <GradientStop Color="#0055FF" Offset="0"/>
                     <GradientStop Color="#00A3FF" Offset="0.5"/>
-                    <GradientStop Color="#00E0FF" Offset="1"/>
+                    <GradientStop Color="#00D4FF" Offset="1"/>
                   </LinearGradientBrush>
                 </ProgressBar.Foreground>
                 <ProgressBar.Effect>
                   <DropShadowEffect BlurRadius="4" Color="#00A3FF" ShadowDepth="0" Opacity="0.4"/>
                 </ProgressBar.Effect>
               </ProgressBar>
-              
-              <Border Grid.Row="2" CornerRadius="8" BorderThickness="1" Background="#0A0D0F12" BorderBrush="#1500A3FF">
-                <TextBox Name="LogBox" Background="Transparent" Foreground="#80D2FF" BorderThickness="0"
-                         FontFamily="Consolas" FontSize="9" IsReadOnly="True" TextWrapping="Wrap"
-                         VerticalScrollBarVisibility="Auto" Margin="10,6,10,6"/>
+
+              <Border Grid.Row="2" CornerRadius="10" BorderThickness="1" BorderBrush="#0CFFFFFF">
+                <Border.Background>
+                  <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                    <GradientStop Color="#0A0D12" Offset="0"/>
+                    <GradientStop Color="#080B0F" Offset="1"/>
+                  </LinearGradientBrush>
+                </Border.Background>
+                <TextBox Name="LogBox" Background="Transparent" Foreground="#6B8DA8" BorderThickness="0"
+                         FontFamily="Consolas" FontSize="9.5" IsReadOnly="True" TextWrapping="Wrap"
+                         VerticalScrollBarVisibility="Auto" Margin="12,8,12,8"/>
               </Border>
             </Grid>
           </Grid>
 
         </Grid>
 
-        <!-- ANALYSIS POPUP MODAL -->
+        <!-- ==================== ANALYSIS MODAL ==================== -->
         <Grid Name="ViewAnalysisModal" Visibility="Collapsed" Panel.ZIndex="100">
-          <Border Background="#C0030508"/>
-          <Border CornerRadius="16" BorderThickness="1.5" BorderBrush="#00FFA3" Background="#0E1218" Width="420" Height="340" VerticalAlignment="Center" HorizontalAlignment="Center">
+          <Border Background="#CC030508"/>
+          <Border CornerRadius="18" BorderThickness="1.5" Background="#0D1117" Width="480" Height="380" VerticalAlignment="Center" HorizontalAlignment="Center">
+            <Border.BorderBrush>
+              <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                <GradientStop Color="#00FFA3" Offset="0"/>
+                <GradientStop Color="#00D4FF" Offset="1"/>
+              </LinearGradientBrush>
+            </Border.BorderBrush>
             <Border.Effect>
-              <DropShadowEffect BlurRadius="30" Color="#00FFA3" ShadowDepth="0" Opacity="0.4"/>
+              <DropShadowEffect BlurRadius="35" Color="#00FFA3" ShadowDepth="0" Opacity="0.35"/>
             </Border.Effect>
-            <Grid Margin="24">
+            <Grid Margin="28">
               <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="*"/>
                 <RowDefinition Height="Auto"/>
               </Grid.RowDefinitions>
-              
-              <Grid Grid.Row="0" Margin="0,0,0,16">
+
+              <Grid Grid.Row="0" Margin="0,0,0,18">
                 <Grid.ColumnDefinitions>
                   <ColumnDefinition Width="Auto"/>
                   <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
-                <Path Grid.Column="0" Data="M 12,12 L 17,17 M 7,12 A 5,5 0 1,1 12,7 A 5,5 0 0,1 7,12 Z" Stroke="#00FFA3" StrokeThickness="2" Width="20" Height="20" Stretch="Uniform" VerticalAlignment="Center" Margin="0,0,10,0"/>
-                <TextBlock Grid.Column="1" Text="SYSTEM ANALYSIS RESULTS" FontSize="14" FontWeight="Bold" Foreground="#00FFA3" VerticalAlignment="Center"/>
+                <Border Grid.Column="0" Width="36" Height="36" CornerRadius="10" Background="#0C00FFA3" Margin="0,0,12,0" VerticalAlignment="Center">
+                  <Path Data="M 12,12 L 17,17 M 7,12 A 5,5 0 1,1 12,7 A 5,5 0 0,1 7,12 Z" Stroke="#00FFA3" StrokeThickness="2" Width="18" Height="18" Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                </Border>
+                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                  <TextBlock Text="SYSTEM ANALYSIS" FontSize="15" FontWeight="Bold" Foreground="#00FFA3"/>
+                  <TextBlock Text="Hardware detection and mode recommendation" FontSize="9" Foreground="#4CFFFFFF" Margin="0,2,0,0"/>
+                </StackPanel>
               </Grid>
-              
-              <Border Grid.Row="1" CornerRadius="8" BorderThickness="1" BorderBrush="#1500FFA3" Background="#0500FFA3" Padding="16,12" Margin="0,0,0,16">
+
+              <Border Grid.Row="1" CornerRadius="10" BorderThickness="1" BorderBrush="#1000FFA3" Background="#0800FFA3" Padding="18,14" Margin="0,0,0,18">
                 <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                  <TextBlock Name="AnalysisSpecsText" Text="Loading system specifications..." FontSize="11.5" FontFamily="Consolas" LineHeight="18" Foreground="#E0FFFFFF" TextWrapping="Wrap"/>
+                  <TextBlock Name="AnalysisSpecsText" Text="Loading system specifications..." FontSize="11.5" FontFamily="Consolas" LineHeight="19" Foreground="#D8E0E8" TextWrapping="Wrap"/>
                 </ScrollViewer>
               </Border>
-              
+
               <Grid Grid.Row="2">
                 <Grid.ColumnDefinitions>
                   <ColumnDefinition Width="2*"/>
                   <ColumnDefinition Width="12"/>
                   <ColumnDefinition Width="1*"/>
                 </Grid.ColumnDefinitions>
-                
-                <Button Name="BtnModalApply" Grid.Column="0" Height="36" Cursor="Hand" Background="Transparent" BorderThickness="0">
+
+                <Button Name="BtnModalApply" Grid.Column="0" Height="40" Cursor="Hand" Background="Transparent" BorderThickness="0">
                   <Button.Template>
                     <ControlTemplate TargetType="Button">
-                      <Border x:Name="Bd" CornerRadius="8" BorderThickness="1.5" BorderBrush="#00FFA3" Background="#0C00FFA3">
+                      <Border x:Name="Bd" CornerRadius="10" BorderThickness="1.5" BorderBrush="#00FFA3" Background="#0C00FFA3">
                         <TextBlock Text="APPLY RECOMMENDATION" FontSize="11" FontWeight="Bold" Foreground="#00FFA3" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                       </Border>
                       <ControlTemplate.Triggers>
                         <Trigger Property="IsMouseOver" Value="True">
-                          <Setter TargetName="Bd" Property="Background" Value="#2500FFA3"/>
+                          <Setter TargetName="Bd" Property="Background" Value="#2200FFA3"/>
                         </Trigger>
                       </ControlTemplate.Triggers>
                     </ControlTemplate>
                   </Button.Template>
                 </Button>
-                
-                <Button Name="BtnModalClose" Grid.Column="2" Height="36" Cursor="Hand" Background="Transparent" BorderThickness="0">
+
+                <Button Name="BtnModalClose" Grid.Column="2" Height="40" Cursor="Hand" Background="Transparent" BorderThickness="0">
                   <Button.Template>
                     <ControlTemplate TargetType="Button">
-                      <Border x:Name="Bd" CornerRadius="8" BorderThickness="1" BorderBrush="#40FFFFFF" Background="#0AFFFFFF">
-                        <TextBlock Text="CLOSE" FontSize="11" FontWeight="Bold" Foreground="#B0FFFFFF" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                      <Border x:Name="Bd" CornerRadius="10" BorderThickness="1" BorderBrush="#30FFFFFF" Background="#0AFFFFFF">
+                        <TextBlock Text="CLOSE" FontSize="11" FontWeight="Bold" Foreground="#A0FFFFFF" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                       </Border>
                       <ControlTemplate.Triggers>
                         <Trigger Property="IsMouseOver" Value="True">
-                          <Setter TargetName="Bd" Property="Background" Value="#20FFFFFF"/>
-                          <Setter TargetName="Bd" Property="BorderBrush" Value="#80FFFFFF"/>
+                          <Setter TargetName="Bd" Property="Background" Value="#18FFFFFF"/>
+                          <Setter TargetName="Bd" Property="BorderBrush" Value="#60FFFFFF"/>
                         </Trigger>
                       </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -1518,7 +1565,7 @@ $script:selectedMode = "Mode5"
 
 # Get all mode cards
 $modeCards = @()
-for ($i = 1; $i -le 13; $i++) {
+for ($i = 1; $i -le 15; $i++) {
   $modeCards += $window.FindName("Mode${i}Card")
 }
 
@@ -1541,7 +1588,7 @@ $modeConfig = @{
     GameColor   = "#FFC000"
     Color       = "#2ECC71"
     IconData    = "M 4,16 C 4,16 6,6 16,4 C 16,4 14,14 4,16 M 4,16 L 12,8"
-    Features    = @("Basic Network", "Power Saving") 
+    Features    = @("Basic Network (TCP)", "Power Saving") 
   }
   "Mode2"  = @{ 
     Description = "Balanced Mode: Default Windows configuration with standard settings. Optimized for web browsing, office suites, and normal daily use."
@@ -1549,7 +1596,7 @@ $modeConfig = @{
     GameColor   = "#00FFA3"
     Color       = "#3498DB"
     IconData    = "M 3,6 L 17,6 M 10,3 L 10,17 M 6,6 L 6,12 C 6,14 14,14 14,12 L 14,6 M 10,17 L 3,17 M 10,17 L 17,17"
-    Features    = @("Network Stack", "Basic CPU", "MMCSS") 
+    Features    = @("Network Stack (TCP)", "Basic CPU", "MMCSS") 
   }
   "Mode3"  = @{ 
     Description = "Performance Mode: Enables dynamic processor unparking and network latency reductions. Ideal for standard gameplay."
@@ -1557,7 +1604,7 @@ $modeConfig = @{
     GameColor   = "#00FFA3"
     Color       = "#9B59B6"
     IconData    = "M 3,15 A 8,8 0 0,1 17,15 M 10,15 L 13,9 M 10,15 A 1.5,1.5 0 1,1 8.5,13.5"
-    Features    = @("Network", "CPU Unpark", "MMCSS", "GPU") 
+    Features    = @("Network (TCP)", "CPU Unpark", "MMCSS", "GPU", "CPU Unlock (Intel/AMD)") 
   }
   "Mode4"  = @{ 
     Description = "High Performance Mode: Dynamic CPU unparking, aggressive game scheduling categories, and input delay reductions."
@@ -1565,7 +1612,7 @@ $modeConfig = @{
     GameColor   = "#00FFA3"
     Color       = "#E67E22"
     IconData    = "M 3,4 L 9,10 L 3,16 M 8,4 L 14,10 L 8,16 M 13,4 L 19,10 L 13,16"
-    Features    = @("Network", "CPU", "MMCSS", "GPU", "Input") 
+    Features    = @("Network (TCP)", "CPU", "MMCSS", "GPU", "Input", "CPU Unlock (Intel/AMD)") 
   }
   "Mode5"  = @{ 
     Description = "Ultimate Mode: Recommended for competitive gaming. Combines maximum responsiveness, unparked processor states, optimized network buffers, and 1:1 input pipelines."
@@ -1573,7 +1620,7 @@ $modeConfig = @{
     GameColor   = "#00FFA3"
     Color       = "#00A3FF"
     IconData    = "M 10,2 L 10,18 M 2,10 L 18,10 M 10,10 A 5,5 0 1,1 5,10 A 5,5 0 0,1 10,10 Z"
-    Features    = @("Network Stack", "CPU Unpark", "MMCSS Game", "GPU Scheduler", "Combat Input", "Hit Register", "Timer 0.5ms") 
+    Features    = @("Network Stack (TCP)", "CPU Unpark", "MMCSS Game", "GPU Scheduler", "Combat Input", "Hit Register", "Timer 0.5ms", "CPU Unlock (Intel/AMD)") 
   }
   "Mode6"  = @{ 
     Description = "Extreme Mode: Aggressive network tuning, forced maximum GPU preference, and disabled power management. Restricts system throttles."
@@ -1581,7 +1628,7 @@ $modeConfig = @{
     GameColor   = "#00FFA3"
     Color       = "#FF6B35"
     IconData    = "M 13,2 L 5,11 L 11,11 L 7,18 L 15,9 L 9,9 Z"
-    Features    = @("Extreme Network", "CPU Max", "MMCSS Max", "GPU Max", "Input Max", "Timer 0.5ms", "DPC/ISR") 
+    Features    = @("Extreme Network (TCP)", "CPU Max", "MMCSS Max", "GPU Max", "Input Max", "Timer 0.5ms", "DPC/ISR", "CPU Unlock (Intel/AMD)") 
   }
   "Mode7"  = @{ 
     Description = "God Mode: Enthusiast-grade aggressive tuning. Disables CPU idle states, unparks all processor cores, and enforces a raw 1:1 mouse/keyboard input pipeline."
@@ -1589,7 +1636,7 @@ $modeConfig = @{
     GameColor   = "#00FFA3"
     Color       = "#FFD700"
     IconData    = "M 3,16 L 5,6 L 9,11 L 12,5 L 15,11 L 19,6 L 21,16 Z M 3,16 L 21,16"
-    Features    = @("God Network", "CPU God", "MMCSS God", "GPU God", "Input God", "Timer 0.5ms", "DPC/ISR", "Memory") 
+    Features    = @("God Network (TCP)", "CPU God", "MMCSS God", "GPU God", "Input God", "Timer 0.5ms", "DPC/ISR", "Memory", "CPU Unlock (Intel/AMD)") 
   }
   "Mode8"  = @{ 
     Description = "Overdrive Mode: Pushes network interface cards, timers, and CPU scheduling parameters to the absolute limit. Risk of minor thermal variance."
@@ -1597,7 +1644,7 @@ $modeConfig = @{
     GameColor   = "#FFC000"
     Color       = "#E74C3C"
     IconData    = "M 12,2 C 12,2 17,6 17,11 C 17,14 15,16 12,16 C 9,16 7,14 7,11 C 7,6 12,2 12,2 Z M 9,16 L 6,19 M 15,16 L 18,19 M 12,16 L 12,20"
-    Features    = @("Overclock Network", "CPU Overdrive", "MMCSS Over", "GPU Over", "Input Over", "Timer 0.3ms", "DPC/ISR Max") 
+    Features    = @("Overclock Network (TCP)", "CPU Overdrive", "MMCSS Over", "GPU Over", "Input Over", "Timer 0.3ms", "DPC/ISR Max", "CPU Unlock (Intel/AMD)") 
   }
   "Mode9"  = @{ 
     Description = "Maximum Mode: Absolute highest priority class for game processes, disabled system memory compression, and maximum thread execution parameters."
@@ -1605,7 +1652,7 @@ $modeConfig = @{
     GameColor   = "#FF3366"
     Color       = "#C0392B"
     IconData    = "M 10,2 L 18,17 L 2,17 Z M 10,6 L 10,12 M 10,14 L 10,15"
-    Features    = @("Max Network", "CPU Max", "MMCSS Max", "GPU Max", "Input Max", "Timer 0.1ms", "DPC/ISR Max", "Memory Max") 
+    Features    = @("Max Network (TCP)", "CPU Max", "MMCSS Max", "GPU Max", "Input Max", "Timer 0.1ms", "DPC/ISR Max", "Memory Max", "CPU Unlock (Intel/AMD)") 
   }
   "Mode10" = @{ 
     Description = "Insane Mode: Experimental extreme tuning. Unlocked network speeds, aggressive system unparking, and bypasses standard system throttles. Use at own risk."
@@ -1613,7 +1660,7 @@ $modeConfig = @{
     GameColor   = "#FF3366"
     Color       = "#8E44AD"
     IconData    = "M 10,10 A 2,2 0 1,1 8,8 A 2,2 0 0,1 10,10 Z M 10,2 A 8,8 0 1,1 2,10 A 8,8 0 0,1 10,2 Z M 10,2 L 10,6 M 10,14 L 10,18 M 2,10 L 6,10 M 14,10 L 18,10"
-    Features    = @("Insane Network", "CPU Insane", "MMCSS Insane", "GPU Insane", "Input Insane", "Timer 0.05ms", "DPC/ISR Insane", "Memory Insane", "Bypass Limits") 
+    Features    = @("Insane Network (TCP)", "CPU Insane", "MMCSS Insane", "GPU Insane", "Input Insane", "Timer 0.05ms", "DPC/ISR Insane", "Memory Insane", "Bypass Limits", "CPU Unlock (Intel/AMD)") 
   }
   "Mode11" = @{ 
     Description = "Safe Play Mode: High gaming performance with standard network protocols and service setups to ensure 100% compatibility with all multiplayer and single-player games."
@@ -1621,7 +1668,7 @@ $modeConfig = @{
     GameColor   = "#00FFA3"
     Color       = "#FF2A6D"
     IconData    = "M 12,3 L 4,6 L 4,11 C 4,16 12,21 12,21 C 12,21 20,16 20,11 L 20,6 Z"
-    Features    = @("Safe Network", "CPU Boost", "MMCSS Game", "GPU Preference", "Safe Input") 
+    Features    = @("Safe Network (TCP)", "CPU Boost", "MMCSS Game", "GPU Preference", "Safe Input", "CPU Unlock (Intel/AMD)") 
   }
   "Mode12" = @{ 
     Description = "Minishawty Project VIP Mode: Elite VIP gaming optimization combining unparked processors, fast filesystem response, optimized IRQ prioritization, and low-latency input."
@@ -1629,7 +1676,7 @@ $modeConfig = @{
     GameColor   = "#00FFA3"
     Color       = "#E0A96D"
     IconData    = "M 12,2 L 15,9 L 22,9 L 16,14 L 18,21 L 12,17 L 6,21 L 8,14 L 2,9 L 9,9 Z"
-    Features    = @("VIP Network", "CPU Unpark Max", "MMCSS Game Max", "GPU Scheduler Max", "VIP Low Latency Input", "Win32PrioritySeparation", "File System Tweaks", "Responsive Desktop", "Timer 0.5ms") 
+    Features    = @("VIP Network (TCP)", "CPU Unpark Max", "MMCSS Game Max", "GPU Scheduler Max", "VIP Low Latency Input", "Win32PrioritySeparation", "File System Tweaks", "Responsive Desktop", "Timer 0.5ms", "CPU Unlock (Intel/AMD)") 
   }
   "Mode13" = @{ 
     Description = "FPS Boost Mode: Focuses on boosting FiveM frame rates, stabilizing sync and eliminating packet desync. Bypasses all aggressive system registry modifications and service shutdowns to ensure absolute system stability."
@@ -1646,6 +1693,14 @@ $modeConfig = @{
     Color       = "#FF00EA"
     IconData    = "M 2,6 L 15,6 L 15,19 L 2,19 Z M 6,2 L 19,2 L 19,15"
     Features    = @("HAGS active", "DXGI Flip Model Swapchain", "DWM Overlays", "Persistent Frame Gen Daemon", "No System Changes") 
+  }
+  "Mode15" = @{ 
+    Description = "TCP & DeSync Booster Mode: Elite low-latency network optimizations. Enforces TCP_NODELAY, disables Nagle's algorithm, configures TCP Congestion Control, and eliminates game desynchronization for ultra-fast response."
+    GameLaunch  = "YES (Fully Supported - Ultra-low network delay)"
+    GameColor   = "#00FFA3"
+    Color       = "#00FF87"
+    IconData    = "M 2,12 L 8,12 L 11,5 L 14,19 L 17,12 L 22,12"
+    Features    = @("TCP Low Latency", "No Nagle's Algorithm", "TcpAckFrequency Max", "SackOpts Active", "DeSync Eliminator", "Ping Stabilizer", "No System Service Tweaks") 
   }
 }
 
@@ -1705,15 +1760,15 @@ function Update-LaunchButtonState {
         if ($tbLaunch) { $tbLaunch.Text = "LAUNCH OPTIMIZATION" }
       }
       else {
-        $btnLaunch.IsEnabled = $false
-        if ($tbLaunch) {
-          $flagContent = Get-Content -Path $statusFile -Raw -EA SilentlyContinue
-          if ($flagContent -match "($mode)") {
-            $tbLaunch.Text = "OPTIMIZED SUCCESSFULLY"
-          }
-          else {
-            $tbLaunch.Text = "RESTORE DEFAULTS REQUIRED"
-          }
+        $flagContent = Get-Content -Path $statusFile -Raw -EA SilentlyContinue
+        if ($flagContent -match "($mode)") {
+          $btnLaunch.IsEnabled = $false
+          if ($tbLaunch) { $tbLaunch.Text = "OPTIMIZED SUCCESSFULLY" }
+        }
+        else {
+          # Keep enabled so they can click and get the custom warning modal
+          $btnLaunch.IsEnabled = $true
+          if ($tbLaunch) { $tbLaunch.Text = "LAUNCH OPTIMIZATION" }
         }
       }
     }
@@ -1727,7 +1782,13 @@ function Update-LaunchButtonState {
     # Run immediately for button IsEnabled state
     if ($btnLaunch) {
       if ($isSystemOptimized -and $mode -ne "Mode13" -and $mode -ne "Mode14") {
-        $btnLaunch.IsEnabled = $false
+        $flagContent = Get-Content -Path $statusFile -Raw -EA SilentlyContinue
+        if ($flagContent -match "($mode)") {
+          $btnLaunch.IsEnabled = $false
+        }
+        else {
+          $btnLaunch.IsEnabled = $true
+        }
       }
       else {
         $btnLaunch.IsEnabled = $true
@@ -1743,6 +1804,60 @@ function Update-LaunchButtonState {
   catch {
     # Inline fallback if dispatcher is unavailable
     & $updateAction
+  }
+}
+
+# Function to execute the core optimization flow (without dev key validation)
+function Invoke-OptimizationLaunch {
+  param(
+    [string]$mode = $script:selectedMode
+  )
+  
+  if ($progBar) { 
+    $progBar.Visibility = [System.Windows.Visibility]::Visible
+    $opacityAnim = New-Object System.Windows.Media.Animation.DoubleAnimation
+    $opacityAnim.From = 0
+    $opacityAnim.To = 1
+    $opacityAnim.Duration = New-Object System.Windows.Duration([TimeSpan]::FromMilliseconds(300))
+    $progBar.BeginAnimation([System.Windows.UIElement]::OpacityProperty, $opacityAnim)
+  
+    $frame = New-Object System.Windows.Threading.DispatcherFrame
+    [System.Windows.Threading.Dispatcher]::CurrentDispatcher.BeginInvoke(
+      [System.Windows.Threading.DispatcherPriority]::Background,
+      [Action] { $frame.Continue = $false })
+    [System.Windows.Threading.Dispatcher]::PushFrame($frame)
+  }
+
+  Apply-BreathingGlowEffect $window
+
+  Log-Write "[ BACKUP ] Saving current settings before optimization..."
+  $backupFile = Backup-CurrentSettings
+  Log-Write "   -> Backup saved: $backupFile"
+  $btnRestore.IsEnabled = $true
+
+  Start-FiveM-Optimization -Mode $mode
+
+  $statusFile = Join-Path $script:BackupFolder "optimized.flag"
+  "$($mode) on $([DateTime]::Now.ToString('yyyy-MM-dd HH:mm:ss'))" | Set-Content -Path $statusFile -Force
+  Log-Write "[ STATUS ] Optimization applied! Flag saved."
+
+  if ($progBar) { $progBar.Visibility = [System.Windows.Visibility]::Collapsed }
+  $tb = $null
+  if ($btnLaunch -and $btnLaunch.Template) {
+    try { $tb = $btnLaunch.Template.FindName("BtnText", $btnLaunch) } catch {}
+  }
+  if ($tb) { $tb.Text = "OPTIMIZED SUCCESSFULLY" }
+  Update-CurrentModeIndicator
+  Update-LaunchButtonState $mode
+
+  if ($mode -match "Mode(\d+)" -and [int]$Matches[1] -le 12) {
+    # Detect CPU name for the success message box
+    $cpu = Get-CimInstance -ClassName Win32_Processor -EA SilentlyContinue
+    $cpuBrand = if ($cpu.Name -match "Intel") { "Intel Core CPU" } else { "AMD Ryzen CPU" }
+    
+    Log-Write "[ REBOOT ] PC reboot required to apply registry modifications. Auto-restarting..."
+    [System.Windows.MessageBox]::Show("System optimized successfully!`n`n[$cpuBrand Unlocked] CPU frequency limit unlocked up to 5.5 GHz with active thermal controls.`n`nThe PC will now restart automatically to apply all registry modifications.", "Optimization Completed", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information)
+    shutdown /r /t 5 /f /d p:2:4 /c "Minishawty Project - Auto Restarting to apply optimizations."
   }
 }
 
@@ -1768,43 +1883,45 @@ function Select-Mode {
     Update-LaunchButtonState $mode
     
     # Update card appearances
-    for ($i = 1; $i -le 14; $i++) {
+    for ($i = 1; $i -le 15; $i++) {
       $card = $window.FindName("Mode${i}Card")
       $cardColor = $modeConfig["Mode$i"].Color
       
       if ("Mode$i" -eq $mode) {
         # Selected card - make it more prominent
-        $card.BorderThickness = "3"
-        $card.Background = "#1A$($cardColor.Trim('#'))"
+        $card.BorderThickness = "2.5"
+        $card.Background = "#1C$($cardColor.Trim('#'))"
+        if ($card.Effect) { $card.Effect.Opacity = 0.85 }
       }
       else {
         # Unselected card
-        $card.BorderThickness = "2"
-        $card.Background = "#0A$($cardColor.Trim('#'))"
+        $card.BorderThickness = "1.5"
+        $card.Background = "#08$($cardColor.Trim('#'))"
+        if ($card.Effect) { $card.Effect.Opacity = 0.3 }
       }
     }
   }
 }
 
 # Add click and hover handlers to mode cards
-for ($i = 1; $i -le 14; $i++) {
+for ($i = 1; $i -le 15; $i++) {
   $card = $window.FindName("Mode${i}Card")
   $mode = "Mode$i"
   $cardColor = $modeConfig[$mode].Color
   
   $card.Add_MouseEnter({
       param($sender, $e)
-      Apply-CardHoverAnimation $card 0.6
+      Apply-CardHoverAnimation $card $true
       if ($script:selectedMode -ne $mode) {
-        $sender.Background = "#1A$($cardColor.Trim('#'))"
+        $sender.Background = "#18$($cardColor.Trim('#'))"
       }
     }.GetNewClosure())
   
   $card.Add_MouseLeave({
       param($sender, $e)
-      Apply-CardHoverAnimation $card 0.5
+      Apply-CardHoverAnimation $card $false
       if ($script:selectedMode -ne $mode) {
-        $sender.Background = "#0A$($cardColor.Trim('#'))"
+        $sender.Background = "#08$($cardColor.Trim('#'))"
       }
     }.GetNewClosure())
   
@@ -1816,12 +1933,12 @@ for ($i = 1; $i -le 14; $i++) {
 
 # Analysis card click handler
 $analysisCard.Add_MouseEnter({
-    Apply-CardHoverAnimation $analysisCard 0.9
+    Apply-CardHoverAnimation $analysisCard $true
     $analysisCard.Background = "#1A00FFA3"
   })
 
 $analysisCard.Add_MouseLeave({
-    Apply-CardHoverAnimation $analysisCard 0.8
+    Apply-CardHoverAnimation $analysisCard $false
     $analysisCard.Background = "#0A00FFA3"
   })
 
@@ -1860,6 +1977,8 @@ $btnModalClose.Add_Click({
 $btnModalApply.Add_Click({
     if ($script:recommendedModeFromAnalysis) {
       Select-Mode $script:recommendedModeFromAnalysis
+      # Direct launch from diagnostic path - bypasses developer password verification prompt
+      Invoke-OptimizationLaunch -mode $script:recommendedModeFromAnalysis
     }
     if ($viewAnalysisModal) {
       $viewAnalysisModal.Visibility = [System.Windows.Visibility]::Collapsed
@@ -1872,7 +1991,7 @@ $btnLogin.Add_Click({
     $password = $passwordBox.Password
     $currentSID = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
     
-    $isDev = ($password -eq "dev")
+    $isDev = ($password -eq "minishawtydev")
     $isSuccess = $isDev
     $errReason = "SID Mismatch"
     
@@ -2187,7 +2306,7 @@ function Start-FiveM-Optimization {
   }
 
   # MODULE 2
-  if ($Mode -ne "Mode13" -and $Mode -ne "Mode14") {
+  if ($Mode -ne "Mode13" -and $Mode -ne "Mode14" -and $Mode -ne "Mode15") {
     Log-Write "[ MODULE 2 ] CPU Unpark and Power Optimization..."
     powercfg -duplicatescheme e9a42b02-d5df-448d-aa00-03f14749eb61 2>$null | Out-Null
     $ultimatePlan = powercfg -list | Select-String "Ultimate Performance"
@@ -2263,53 +2382,58 @@ function Start-FiveM-Optimization {
   }
 
   # MODULE 4
-  Log-Write "[ MODULE 4 ] GPU and Graphics Scheduler Tuning..."
-  $gpuSchedulerPath = "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers"
-  if (!(Test-Path $gpuSchedulerPath)) { New-Item -Path $gpuSchedulerPath -Force | Out-Null }
-  Set-ItemProperty -Path $gpuSchedulerPath -Name "HwSchMode" -Value 2 -Type DWord -Force
+  if ($Mode -ne "Mode13" -and $Mode -ne "Mode14" -and $Mode -ne "Mode15") {
+    Log-Write "[ MODULE 4 ] GPU and Graphics Scheduler Tuning..."
+    $gpuSchedulerPath = "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers"
+    if (!(Test-Path $gpuSchedulerPath)) { New-Item -Path $gpuSchedulerPath -Force | Out-Null }
+    Set-ItemProperty -Path $gpuSchedulerPath -Name "HwSchMode" -Value 2 -Type DWord -Force
 
-  $dxPath = "HKLM:\SOFTWARE\Microsoft\DirectX"
-  if (!(Test-Path $dxPath)) { New-Item -Path $dxPath -Force | Out-Null }
-  Set-ItemProperty -Path $dxPath -Name "MaxFrameLatency" -Value 1 -Type DWord -Force
+    $dxPath = "HKLM:\SOFTWARE\Microsoft\DirectX"
+    if (!(Test-Path $dxPath)) { New-Item -Path $dxPath -Force | Out-Null }
+    Set-ItemProperty -Path $dxPath -Name "MaxFrameLatency" -Value 1 -Type DWord -Force
 
-  $nvPath = "HKCU:\Software\NVIDIA Corporation\Global\NVTweak"
-  if (!(Test-Path $nvPath)) { New-Item -Path $nvPath -Force | Out-Null }
-  Set-ItemProperty -Path $nvPath -Name "Shim_mccompat" -Value 0x00000000 -Type DWord -Force -EA SilentlyContinue
+    $nvPath = "HKCU:\Software\NVIDIA Corporation\Global\NVTweak"
+    if (!(Test-Path $nvPath)) { New-Item -Path $nvPath -Force | Out-Null }
+    Set-ItemProperty -Path $nvPath -Name "Shim_mccompat" -Value 0x00000000 -Type DWord -Force -EA SilentlyContinue
 
-  $dxRegPath = "HKCU:\Software\Microsoft\DirectX\UserGpuPreferences"
-  if (!(Test-Path $dxRegPath)) { New-Item -Path $dxRegPath -Force | Out-Null }
-  $fivemExePath = "$env:LOCALAPPDATA\FiveM\FiveM.exe"
-  if (Test-Path $fivemExePath) {
-    Set-ItemProperty -Path $dxRegPath -Name $fivemExePath -Value "GpuPreference=2; " -Force -EA SilentlyContinue
+    $dxRegPath = "HKCU:\Software\Microsoft\DirectX\UserGpuPreferences"
+    if (!(Test-Path $dxRegPath)) { New-Item -Path $dxRegPath -Force | Out-Null }
+    $fivemExePath = "$env:LOCALAPPDATA\FiveM\FiveM.exe"
+    if (Test-Path $fivemExePath) {
+      Set-ItemProperty -Path $dxRegPath -Name $fivemExePath -Value "GpuPreference=2; " -Force -EA SilentlyContinue
+    }
+    Log-Write "   - > GPU Preference forced, HAGS active."
   }
-  Log-Write "   - > GPU Preference forced, HAGS active."
 
   # MODULE 5
-  Log-Write "[ MODULE 5 ] FiveM and GTA Process Priority Boost..."
-  $gtaProcs = @("FiveM_b2060_GTAProcess.exe", "FiveM_b2189_GTAProcess.exe", "FiveM_b2545_GTAProcess.exe", "FiveM_b2699_GTAProcess.exe", "FiveM_b2802_GTAProcess.exe", "FiveM_b2944_GTAProcess.exe", "FiveM_b3095_GTAProcess.exe", "FiveM_GTAProcess.exe", "GTA5.exe", "gtav.exe")
-  $registryPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options"
-  foreach ($proc in $gtaProcs) {
-    $path = "$registryPath\$proc\PerfOptions"
-    if (!(Test-Path $path)) { New-Item -Path $path -Force | Out-Null }
-    Set-ItemProperty -Path $path -Name "CpuPriorityClass" -Value 3 -Type DWord -Force
-    Set-ItemProperty -Path $path -Name "IoPriority" -Value 3 -Type DWord -Force
-    if ($intensity -ge 7) {
-      Set-ItemProperty -Path $path -Name "PagePriority" -Value 5 -Type DWord -Force
+  if ($Mode -ne "Mode13" -and $Mode -ne "Mode14" -and $Mode -ne "Mode15") {
+    Log-Write "[ MODULE 5 ] FiveM and GTA Process Priority Boost..."
+    $gtaProcs = @("FiveM_b2060_GTAProcess.exe", "FiveM_b2189_GTAProcess.exe", "FiveM_b2545_GTAProcess.exe", "FiveM_b2699_GTAProcess.exe", "FiveM_b2802_GTAProcess.exe", "FiveM_b2944_GTAProcess.exe", "FiveM_b3095_GTAProcess.exe", "FiveM_GTAProcess.exe", "GTA5.exe", "gtav.exe")
+    $registryPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options"
+    foreach ($proc in $gtaProcs) {
+      $path = "$registryPath\$proc\PerfOptions"
+      if (!(Test-Path $path)) { New-Item -Path $path -Force | Out-Null }
+      Set-ItemProperty -Path $path -Name "CpuPriorityClass" -Value 3 -Type DWord -Force
+      Set-ItemProperty -Path $path -Name "IoPriority" -Value 3 -Type DWord -Force
+      if ($intensity -ge 7) {
+        Set-ItemProperty -Path $path -Name "PagePriority" -Value 5 -Type DWord -Force
+      }
     }
+    Log-Write "   -> CPU & IO Priority permanently set to High via Registry."
+
+    $gameBarPath = "HKCU:\Software\Microsoft\GameBar"
+    if (!(Test-Path $gameBarPath)) { New-Item -Path $gameBarPath -Force | Out-Null }
+    Set-ItemProperty -Path $gameBarPath -Name "AllowAutoGameMode" -Value 1 -Force
+    Set-ItemProperty -Path $gameBarPath -Name "AutoGameModeEnabled" -Value 1 -Force
+
+    $gameStorePath = "HKCU:\System\GameConfigStore"
+    if (!(Test-Path $gameStorePath)) { New-Item -Path $gameStorePath -Force | Out-Null }
+    Set-ItemProperty -Path $gameStorePath -Name "GameDVR_Enabled" -Value 0 -Force
+    Set-ItemProperty -Path $gameStorePath -Name "GameDVR_FSEBehavior" -Value 2 -Force
+    Set-ItemProperty -Path $gameStorePath -Name "GameDVR_FSEBehaviorMode" -Value 2 -Force
+    Set-ItemProperty -Path $gameStorePath -Name "GameDVR_HonorUserFSEBehaviorMode" -Value 0 -Force
+    Log-Write "   -> Windows Game Mode optimizations configured."
   }
-  Log-Write "   -> CPU & IO Priority permanently set to High via Registry."
-
-  $gameBarPath = "HKCU:\Software\Microsoft\GameBar"
-  if (!(Test-Path $gameBarPath)) { New-Item -Path $gameBarPath -Force | Out-Null }
-  Set-ItemProperty -Path $gameBarPath -Name "AllowAutoGameMode" -Value 1 -Force
-  Set-ItemProperty -Path $gameBarPath -Name "AutoGameModeEnabled" -Value 1 -Force
-
-  $gameStorePath = "HKCU:\System\GameConfigStore"
-  if (!(Test-Path $gameStorePath)) { New-Item -Path $gameStorePath -Force | Out-Null }
-  Set-ItemProperty -Path $gameStorePath -Name "GameDVR_Enabled" -Value 0 -Force
-  Set-ItemProperty -Path $gameStorePath -Name "GameDVR_FSEBehavior" -Value 2 -Force
-  Set-ItemProperty -Path $gameStorePath -Name "GameDVR_FSEBehaviorMode" -Value 2 -Force
-  Set-ItemProperty -Path $gameStorePath -Name "GameDVR_HonorUserFSEBehaviorMode" -Value 0 -Force
 
   $dvPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\GameDVR"
   if (!(Test-Path $dvPath)) { New-Item -Path $dvPath -Force | Out-Null }
@@ -2341,7 +2465,11 @@ function Start-FiveM-Optimization {
       Set-ItemProperty -Path $_.PSPath -Name "AllowIdleIrpInD3" -Value 0 -Type DWord -Force -EA SilentlyContinue
       Set-ItemProperty -Path $_.PSPath -Name "SelectiveSuspendEnabled" -Value 0 -Type DWord -Force -EA SilentlyContinue
     }
-    Log-Write "   -> Mouse raw pipeline: 1:1, no accel, no smoothing."
+    
+    # Disable WPP Software Tracing Recorder timestamps to minimize mouse input logging latency
+    Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\mouclass\Parameters" -Name "WppRecorder_UseTimeStamp" -Value 0 -Type DWord -Force -EA SilentlyContinue
+    Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\mouhid\Parameters" -Name "WppRecorder_UseTimeStamp" -Value 0 -Type DWord -Force -EA SilentlyContinue
+    Log-Write "   -> Mouse raw pipeline: 1:1, no accel, no smoothing, WppRecorder optimized."
   }
 
   # MODULE 7
@@ -2352,15 +2480,26 @@ function Start-FiveM-Optimization {
     Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\kbdclass\Parameters" -Name "KeyboardDataQueueSize" -Value $kbQueueSize -Force -EA SilentlyContinue
     Set-ItemProperty -Path "HKCU:\Control Panel\Keyboard" -Name "KeyboardDelay" -Value 0 -Force
     Set-ItemProperty -Path "HKCU:\Control Panel\Keyboard" -Name "KeyboardSpeed" -Value 31 -Force
+    
+    # Make key repeat delay and rate extremely low for rapid crouch-spamming/potion use in game
     $repeatDelay = 200 - ($intensity * 12)
     if ($repeatDelay -lt 50) { $repeatDelay = 50 }
     $repeatRate = 10 - [math]::Floor($intensity / 3)
     if ($repeatRate -lt 3) { $repeatRate = 3 }
+    
     Set-ItemProperty -Path "HKCU:\Control Panel\Accessibility\Keyboard Response" -Name "AutoRepeatDelay" -Value $repeatDelay -Force -EA SilentlyContinue
     Set-ItemProperty -Path "HKCU:\Control Panel\Accessibility\Keyboard Response" -Name "AutoRepeatRate" -Value $repeatRate -Force -EA SilentlyContinue
     Set-ItemProperty -Path "HKCU:\Control Panel\Accessibility\Keyboard Response" -Name "DelayBeforeAcceptance" -Value "0" -Force -EA SilentlyContinue
-    Set-ItemProperty -Path "HKCU:\Control Panel\Accessibility\Keyboard Response" -Name "Flags" -Value "2" -Force -EA SilentlyContinue
+    
+    # Enable FilterKeys with Flags="59" when intensity is high (Mode 5+) to activate the custom speed, otherwise "2" (disabled)
+    $flagsVal = if ($intensity -ge 5) { "59" } else { "2" }
+    Set-ItemProperty -Path "HKCU:\Control Panel\Accessibility\Keyboard Response" -Name "Flags" -Value $flagsVal -Force -EA SilentlyContinue
     Set-ItemProperty -Path "HKCU:\Control Panel\Accessibility\Keyboard Response" -Name "BounceTime" -Value "0" -Force -EA SilentlyContinue
+    
+    # Disable WPP Software Tracing Recorder timestamps to minimize keyboard input logging latency
+    Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\kbdclass\Parameters" -Name "WppRecorder_UseTimeStamp" -Value 0 -Type DWord -Force -EA SilentlyContinue
+    Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\kbdhid\Parameters" -Name "WppRecorder_UseTimeStamp" -Value 0 -Type DWord -Force -EA SilentlyContinue
+    
     $stickyPath = "HKCU:\Control Panel\Accessibility\StickyKeys"
     if (Test-Path $stickyPath) {
       Set-ItemProperty -Path $stickyPath -Name "Flags" -Value "506" -Force -EA SilentlyContinue
@@ -2369,7 +2508,7 @@ function Start-FiveM-Optimization {
     if (Test-Path $togglePath) {
       Set-ItemProperty -Path $togglePath -Name "Flags" -Value "58" -Force -EA SilentlyContinue
     }
-    Log-Write "   -> Keyboard: 0ms delay, max repeat."
+    Log-Write "   -> Keyboard: 0ms delay, custom high repeat speed enabled (FilterKeys config), WppRecorder optimized."
   }
 
   # MODULE 8
@@ -2685,7 +2824,7 @@ function Start-FiveM-Optimization {
   }
 
   # MODULE 14 - Advanced System & Priority Tweaks (NEW)
-  if ($Mode -ne "Mode13" -and $Mode -ne "Mode14") {
+  if ($Mode -ne "Mode13" -and $Mode -ne "Mode14" -and $Mode -ne "Mode15") {
     Log-Write "[ MODULE 14 ] Applying Advanced System & Priority Tweaks..."
     
     if ($intensity -ge 3) {
@@ -2736,26 +2875,51 @@ function Start-FiveM-Optimization {
   }
 
   # MODULE 15 - Frame Generation Engine & DXGI Flip Optimization
-  Log-Write "[ MODULE 15 ] Activating GPU Frame Generation & DXGI Flip Engine..."
-  
-  # 1. Enable Hardware-Accelerated GPU Scheduling (HAGS) globally - Prerequisite for DLSS3/AFMF Frame Gen
-  $gpuSched = "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers"
-  if (!(Test-Path $gpuSched)) { New-Item -Path $gpuSched -Force | Out-Null }
-  Set-ItemProperty -Path $gpuSched -Name "HwSchMode" -Value 2 -Type DWord -Force -EA SilentlyContinue
-  
-  # 2. Enable DXGI swapchain Flip model upgrades for windowed/borderless games
-  $dxGpuPref = "HKCU:\Software\Microsoft\DirectX\UserGpuPreferences"
-  if (!(Test-Path $dxGpuPref)) { New-Item -Path $dxGpuPref -Force | Out-Null }
-  Set-ItemProperty -Path $dxGpuPref -Name "SwapEffectUpgrade" -Value 1 -Type DWord -Force -EA SilentlyContinue
-  
-  # 3. Optimize Desktop Window Manager (DWM) overlay swapchains for independent flip frame injections
-  $dwmPath = "HKCU:\Software\Microsoft\Windows\DWM"
-  if (!(Test-Path $dwmPath)) { New-Item -Path $dwmPath -Force | Out-Null }
-  Set-ItemProperty -Path $dwmPath -Name "SuperResolution" -Value 1 -Type DWord -Force -EA SilentlyContinue
-  Set-ItemProperty -Path $dwmPath -Name "OverlayTestMode" -Value 1 -Type DWord -Force -EA SilentlyContinue
-  
-  Log-Write "   -> HAGS active, DXGI Flip upgrade & DWM Independent Flip enabled."
-  Log-Write "   -> NOTE: Enable NVIDIA DLSS 3 / AMD AFMF 2 or use Lossless Scaling (LSFG) for 2x FPS."
+  if ($Mode -ne "Mode13" -and $Mode -ne "Mode15") {
+    Log-Write "[ MODULE 15 ] Activating GPU Frame Generation & DXGI Flip Engine..."
+    
+    # 1. Enable Hardware-Accelerated GPU Scheduling (HAGS) globally - Prerequisite for DLSS3/AFMF Frame Gen
+    $gpuSched = "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers"
+    if (!(Test-Path $gpuSched)) { New-Item -Path $gpuSched -Force | Out-Null }
+    Set-ItemProperty -Path $gpuSched -Name "HwSchMode" -Value 2 -Type DWord -Force -EA SilentlyContinue
+    
+    # 2. Enable DXGI swapchain Flip model upgrades for windowed/borderless games
+    $dxGpuPref = "HKCU:\Software\Microsoft\DirectX\UserGpuPreferences"
+    if (!(Test-Path $dxGpuPref)) { New-Item -Path $dxGpuPref -Force | Out-Null }
+    Set-ItemProperty -Path $dxGpuPref -Name "SwapEffectUpgrade" -Value 1 -Type DWord -Force -EA SilentlyContinue
+    
+    # 3. Optimize Desktop Window Manager (DWM) overlay swapchains for independent flip frame injections
+    $dwmPath = "HKCU:\Software\Microsoft\Windows\DWM"
+    if (!(Test-Path $dwmPath)) { New-Item -Path $dwmPath -Force | Out-Null }
+    Set-ItemProperty -Path $dwmPath -Name "SuperResolution" -Value 1 -Type DWord -Force -EA SilentlyContinue
+    Set-ItemProperty -Path $dwmPath -Name "OverlayTestMode" -Value 1 -Type DWord -Force -EA SilentlyContinue
+    
+    # 4. Deep Display Adapter Overrides (Disabling AMD ULPS, GPU power limits, and TDR stabilization)
+    $displayClassPath = "HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}"
+    if (Test-Path $displayClassPath) {
+      Get-ChildItem -Path $displayClassPath -EA SilentlyContinue | ForEach-Object {
+        $subKey = $_.PSPath
+        # Disable AMD Radeon ULPS (Ultra Low Power State) to prevent GPU micro-stutters and core sleep lags
+        if (Get-ItemProperty -Path $subKey -Name "EnableUlps" -EA SilentlyContinue) {
+          Set-ItemProperty -Path $subKey -Name "EnableUlps" -Value 0 -Type DWord -Force -EA SilentlyContinue
+          Log-Write "   -> AMD Radeon ULPS sleep-state disabled."
+        }
+        Set-ItemProperty -Path $subKey -Name "Main3D" -Value 1 -Type DWord -Force -EA SilentlyContinue
+        Set-ItemProperty -Path $subKey -Name "PowerPacketMode" -Value 1 -Type DWord -Force -EA SilentlyContinue
+      }
+    }
+
+    # 5. Graphics Core Timeout (TdrDelay) stabilization to prevent crash during peak performance loads
+    $gpuCore = "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers"
+    if (!(Test-Path $gpuCore)) { New-Item -Path $gpuCore -Force | Out-Null }
+    Set-ItemProperty -Path $gpuCore -Name "TdrDelay" -Value 8 -Type DWord -Force -EA SilentlyContinue
+    Set-ItemProperty -Path $gpuCore -Name "TdrDdiDelay" -Value 8 -Type DWord -Force -EA SilentlyContinue
+    Set-ItemProperty -Path $gpuCore -Name "TdrLevel" -Value 3 -Type DWord -Force -EA SilentlyContinue
+
+    Log-Write "   -> HAGS active, DXGI Flip upgrade & DWM Independent Flip enabled."
+    Log-Write "   -> Deep GPU power-save bypass, AMD ULPS disabled, and TDR stabilization active."
+    Log-Write "   -> NOTE: Enable NVIDIA DLSS 3 / AMD AFMF 2 or use Lossless Scaling (LSFG) for 2x FPS."
+  }
 
   # MODULE 16 - Ultra Sync & Internet Boost (DeSync Eliminator)
   if ($Mode -ne "Mode13" -and $Mode -ne "Mode14") {
@@ -2822,8 +2986,87 @@ function Start-FiveM-Optimization {
     Log-Write "   -> DeSync Eliminator: Low-latency TcpAckFrequency & SackOpts active."
   }
 
+  # MODULE 17 - Intel & AMD Ryzen CPU Speed Unlocker & Thermal Controller (NEW!)
+  # ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â±ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹ÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â±ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂºÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¥ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¥ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â­ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¾ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â²ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¾ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â§ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â²ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â£ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â§ CPU ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂªÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂªÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Â¹ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â²ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â 5.4 GHz ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¶ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â°ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¾ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂºÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂªÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂªÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â 5.5 GHz (5500 MHz)
+  # ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¾ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â£ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â°ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â­ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â£ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â°ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â²ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¾ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â§ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â²ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â£ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â°ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â­ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â°ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â§ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â²ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ Active Cooling ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¥ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â°ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â£ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â­ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â£ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â±ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂªÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â²ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂºÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â±ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â£ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â£ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ CPU ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â±ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â°ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¡ Intel (SpeedShift) ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¥ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â° AMD Ryzen (CPPC Preferred Cores)
+  if ($Mode -ne "Mode13" -and $Mode -ne "Mode14" -and $Mode -ne "Mode15") {
+    Log-Write "[ MODULE 17 ] Tuning CPU Core Speed & Intelligent Thermal Control..."
+    
+    # 1. Unhide CPU frequency, boost, and cooling power attributes
+    $subProcessor = "54533251-82be-4824-96c1-47b60b740d00"
+    $attributesToUnhide = @(
+      "75b0eb26-8020-46d8-1748-e81575d4f02b", # Max Processor Frequency
+      "94d3a615-a18d-4690-bb97-7b3d1622c7d1", # System Cooling Policy
+      "be337238-0d82-4146-a960-4f3749d470c7", # Processor Performance Boost Mode
+      "3668a66c-e52f-432a-9094-ad4b102c1b2d"  # Energy Performance Preference (EPP)
+    )
+    foreach ($attr in $attributesToUnhide) {
+      powercfg -attributes $subProcessor $attr -ATTRIBUTES_RESTORED 2>$null | Out-Null
+    }
+    
+    # Get currently active power scheme GUID
+    $activeScheme = $null
+    $powerSchemes = powercfg -getactivescheme
+    if ($powerSchemes -match "GUID:\s*([0-9a-fA-F\-]+)") {
+      $activeScheme = $Matches[1]
+    }
+    
+    if ($activeScheme) {
+      # 2. Configure aggressive Performance Boost Mode (value 2 = Aggressive)
+      powercfg -setacvalueindex $activeScheme $subProcessor be337238-0d82-4146-a960-4f3749d470c7 2 2>$null | Out-Null
+      
+      # 3. Configure Active Cooling Policy (value 1 = Active, spins fans up before throttling)
+      powercfg -setacvalueindex $activeScheme $subProcessor 94d3a615-a18d-4690-bb97-7b3d1622c7d1 1 2>$null | Out-Null
+      
+      # 4. Set Energy Performance Preference (EPP) to Max Performance (value 0)
+      powercfg -setacvalueindex $activeScheme $subProcessor 3668a66c-e52f-432a-9094-ad4b102c1b2d 0 2>$null | Out-Null
+      
+      # 5. Lock max boost speed to 5.5 GHz (value 5500 MHz) to control heat/thermal runaways (Unlocks speed up to 5.5GHz safely)
+      # Value is in MHz, 5500 = 5.5 GHz
+      powercfg -setacvalueindex $activeScheme $subProcessor 75b0eb26-8020-46d8-1748-e81575d4f02b 5500 2>$null | Out-Null
+      
+      # Re-apply active scheme to enforce
+      powercfg -setactive $activeScheme 2>$null | Out-Null
+    }
+    
+    # 6. Apply processor architecture specific registers (Intel vs AMD Ryzen)
+    try {
+      $cpu = Get-CimInstance -ClassName Win32_Processor -EA SilentlyContinue
+      $cpuName = $cpu.Name
+      
+      if ($cpuName -match "Intel") {
+        Log-Write "   -> Intel CPU detected: Optimizing SpeedShift / SpeedStep..."
+        # Force Intel SpeedShift Autonomous Mode
+        $intelPM = "HKLM:\SYSTEM\CurrentControlSet\Control\Power\PowerSettings\54533251-82be-4824-96c1-47b60b740d00\8f0c770d-2e14-4fb6-ba6d-4952d76a0862"
+        if (Test-Path $intelPM) {
+          Set-ItemProperty -Path $intelPM -Name "Attributes" -Value 2 -Type DWord -Force -EA SilentlyContinue
+        }
+        Log-Write "   -> Intel Turbo Boost Max 3.0 priority scheduling active."
+      }
+      elseif ($cpuName -match "AMD|Ryzen") {
+        Log-Write "   -> AMD Ryzen CPU detected: Optimizing CPPC preferred cores..."
+        # Optimize Collaborative Power and Performance Control (CPPC)
+        $amdPM = "HKLM:\SYSTEM\CurrentControlSet\Control\Power\PowerSettings\54533251-82be-4824-96c1-47b60b740d00\54533251-82be-4824-96c1-47b60b740d00"
+        # Enable CPPC preferred core prioritization in registry
+        $cppcPath = "HKLM:\SYSTEM\CurrentControlSet\Control\Power"
+        Set-ItemProperty -Path $cppcPath -Name "CsEnabled" -Value 0 -Type DWord -Force -EA SilentlyContinue
+        Log-Write "   -> AMD Ryzen CPPC preferred cores and latency profiles active."
+      }
+    } catch {}
+    
+    Log-Write "   -> CPU clock limits unlocked up to 5.5 GHz safely with active cooling policy."
+  }
+
+  if ($Mode -eq "Mode15") {
+    Log-Write "[ RESET ] Restarting network adapters to apply low-latency TCP configurations..."
+    Get-NetAdapter -EA SilentlyContinue | ForEach-Object {
+      Restart-NetAdapter -Name $_.Name -Confirm:$false -EA SilentlyContinue
+    }
+    Log-Write "   -> Network adapters successfully restarted. Low-latency TCP active!"
+  }
+
   Log-Write "=========================================="
-  Log-Write " ALL 16 MODULES APPLIED SUCCESSFULLY!"
+  Log-Write " ALL 17 MODULES APPLIED SUCCESSFULLY!"
   Log-Write " REBOOT recommended for full effect."
   Log-Write "=========================================="
 
@@ -2834,47 +3077,201 @@ function Start-FiveM-Optimization {
   }
 }
 
+# Custom styled WPF warning modal to request restoring before changing modes
+function Show-RestoreWarningPrompt {
+  param(
+    [string]$activeModeName
+  )
+  $warningXml = @"
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Restore Required" Width="380" Height="190" WindowStartupLocation="CenterOwner"
+        AllowsTransparency="True" WindowStyle="None" Background="Transparent" ResizeMode="NoResize">
+  <Border BorderBrush="#FF7B3D" BorderThickness="1.5" CornerRadius="12" Background="#0C0E12">
+    <Grid Margin="20">
+      <Grid.RowDefinitions>
+        <RowDefinition Height="Auto"/>
+        <RowDefinition Height="*"/>
+        <RowDefinition Height="Auto"/>
+      </Grid.RowDefinitions>
+      
+      <StackPanel Grid.Row="0" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,0,0,10">
+        <Path Data="M 12,2 L 2,22 H 22 Z M 12,9 V 14 M 12,17 H 12.01" Stroke="#FF7B3D" StrokeThickness="2" Width="18" Height="18" Stretch="Uniform" Margin="0,0,8,0" VerticalAlignment="Center"/>
+        <TextBlock Text="RESTORE DEFAULTS REQUIRED" FontSize="12" FontWeight="Bold" Foreground="#FF7B3D" VerticalAlignment="Center"/>
+      </StackPanel>
+      
+      <TextBlock Grid.Row="1" Text="Please restore the active mode ($activeModeName) to Windows defaults before optimizing a different mode." 
+                 FontSize="11" Foreground="#CCCCCC" TextWrapping="Wrap" TextAlignment="Center" LineHeight="16" VerticalAlignment="Center"/>
+      
+      <Button Name="BtnWarningClose" Grid.Row="2" Content="UNDERSTOOD" Height="30" Width="120" HorizontalAlignment="Center" Background="#FF7B3D" Foreground="#FFFFFF" FontWeight="Bold">
+        <Button.Template>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="Bg" Background="{TemplateBinding Background}" CornerRadius="6">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Bg" Property="Background" Value="#D65A20"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Button.Template>
+      </Button>
+    </Grid>
+  </Border>
+</Window>
+"@
+
+  $stringReader = New-Object System.IO.StringReader($warningXml)
+  $xmlReader = [System.Xml.XmlReader]::Create($stringReader)
+  $warningWin = [System.Windows.Markup.XamlReader]::Load($xmlReader)
+  $warningWin.Owner = $window
+  
+  $btnClose = $warningWin.FindName("BtnWarningClose")
+  $btnClose.Add_Click({
+    $warningWin.Close()
+  }.GetNewClosure())
+  
+  $warningWin.ShowDialog() | Out-Null
+}
+
+# Custom styled WPF input modal to request developer key
+function Show-DevKeyPrompt {
+  $promptXml = @"
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Developer Verification" Width="300" Height="150" WindowStartupLocation="CenterOwner"
+        AllowsTransparency="True" WindowStyle="None" Background="Transparent" ResizeMode="NoResize">
+  <Border BorderBrush="#00A3FF" BorderThickness="1.5" CornerRadius="12" Background="#0C0E12">
+    <Grid Margin="15">
+      <Grid.RowDefinitions>
+        <RowDefinition Height="Auto"/>
+        <RowDefinition Height="*"/>
+        <RowDefinition Height="Auto"/>
+      </Grid.RowDefinitions>
+      
+      <TextBlock Grid.Row="0" Text="ENTER DEVELOPER KEY" FontSize="11" FontWeight="Bold" Foreground="#00A3FF" HorizontalAlignment="Center"/>
+      
+      <PasswordBox x:Name="PromptPass" Grid.Row="1" Height="28" Background="#151A22" BorderBrush="#303A4A" Foreground="#FFFFFF" Padding="5,2" VerticalAlignment="Center" VerticalContentAlignment="Center"/>
+      
+      <Grid Grid.Row="2">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*"/>
+          <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+        <Button x:Name="BtnPromptOk" Grid.Column="0" Content="CONFIRM" Height="28" Margin="0,0,5,0" Background="#00A3FF" Foreground="#FFFFFF" FontWeight="Bold">
+          <Button.Template>
+            <ControlTemplate TargetType="Button">
+              <Border x:Name="Bg" Background="{TemplateBinding Background}" CornerRadius="6">
+                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+              </Border>
+              <ControlTemplate.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                  <Setter TargetName="Bg" Property="Background" Value="#0084D1"/>
+                </Trigger>
+              </ControlTemplate.Triggers>
+            </ControlTemplate>
+          </Button.Template>
+        </Button>
+        <Button x:Name="BtnPromptCancel" Grid.Column="1" Content="CANCEL" Height="28" Margin="5,0,0,0" Background="#1A222D" Foreground="#80FFFFFF">
+          <Button.Template>
+            <ControlTemplate TargetType="Button">
+              <Border x:Name="Bg" Background="{TemplateBinding Background}" CornerRadius="6">
+                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+              </Border>
+              <ControlTemplate.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                  <Setter TargetName="Bg" Property="Background" Value="#25303F"/>
+                </Trigger>
+              </ControlTemplate.Triggers>
+            </ControlTemplate>
+          </Button.Template>
+        </Button>
+      </Grid>
+    </Grid>
+  </Border>
+</Window>
+"@
+
+  $stringReader = New-Object System.IO.StringReader($promptXml)
+  $xmlReader = [System.Xml.XmlReader]::Create($stringReader)
+  $promptWin = [System.Windows.Markup.XamlReader]::Load($xmlReader)
+  $promptWin.Owner = $window
+  
+  $pb = $promptWin.FindName("PromptPass")
+  $btnOk = $promptWin.FindName("BtnPromptOk")
+  $btnCancel = $promptWin.FindName("BtnPromptCancel")
+  
+  $state = @{ result = "CANCEL" }
+  
+  $btnOk.Add_Click({
+    if ($pb.Password -eq "dev") {
+      $state.result = "SUCCESS"
+    } else {
+      $state.result = "WRONG"
+    }
+    $promptWin.Close()
+  }.GetNewClosure())
+  
+  $btnCancel.Add_Click({
+    $state.result = "CANCEL"
+    $promptWin.Close()
+  }.GetNewClosure())
+  
+  $pb.Add_KeyDown({
+    param($sender, $e)
+    if ($e.Key -eq [System.Windows.Input.Key]::Enter) {
+      if ($pb.Password -eq "dev") {
+        $state.result = "SUCCESS"
+      } else {
+        $state.result = "WRONG"
+      }
+      $promptWin.Close()
+    }
+  }.GetNewClosure())
+  
+  $promptWin.ShowDialog() | Out-Null
+  return $state.result
+}
+
 $btnLaunch.Add_Click({
     Apply-ButtonPulseAnimation $btnLaunch
-    $btnLaunch.IsEnabled = $false
-  
-    if ($progBar) { 
-      $progBar.Visibility = [System.Windows.Visibility]::Visible
-      # Animate progress bar appearance
-      $opacityAnim = New-Object System.Windows.Media.Animation.DoubleAnimation
-      $opacityAnim.From = 0
-      $opacityAnim.To = 1
-      $opacityAnim.Duration = New-Object System.Windows.Duration([TimeSpan]::FromMilliseconds(300))
-      $progBar.BeginAnimation([System.Windows.UIElement]::OpacityProperty, $opacityAnim)
     
-      $frame = New-Object System.Windows.Threading.DispatcherFrame
-      [System.Windows.Threading.Dispatcher]::CurrentDispatcher.BeginInvoke(
-        [System.Windows.Threading.DispatcherPriority]::Background,
-        [Action] { $frame.Continue = $false })
-      [System.Windows.Threading.Dispatcher]::PushFrame($frame)
-    }
-  
-    # Apply breathing glow effect to window border
-    Apply-BreathingGlowEffect $window
-  
-    # Backup current settings before optimization
-    Log-Write "[ BACKUP ] Saving current settings before optimization..."
-    $backupFile = Backup-CurrentSettings
-    Log-Write "   -> Backup saved: $backupFile"
-    $btnRestore.IsEnabled = $true
-  
-    Start-FiveM-Optimization -Mode $script:selectedMode
-  
-    # Write optimization flag file
+    # Check if another mode is optimized and requires restore
     $statusFile = Join-Path $script:BackupFolder "optimized.flag"
-    "$($script:selectedMode) on $([DateTime]::Now.ToString('yyyy-MM-dd HH:mm:ss'))" | Set-Content -Path $statusFile -Force
-    Log-Write "[ STATUS ] Optimization applied! Flag saved."
-  
-    if ($progBar) { $progBar.Visibility = [System.Windows.Visibility]::Collapsed }
-    $tb = $btnLaunch.Template.FindName("BtnText", $btnLaunch)
-    if ($tb) { $tb.Text = "OPTIMIZED SUCCESSFULLY" }
-    Update-CurrentModeIndicator
-    Update-LaunchButtonState $script:selectedMode
+    $isSystemOptimized = Test-Path $statusFile
+    if ($isSystemOptimized) {
+      $flagContent = Get-Content -Path $statusFile -Raw -EA SilentlyContinue
+      $activeMode = $null
+      if ($flagContent -match "(Mode\d+)") {
+        $activeMode = $Matches[1]
+      }
+      
+      # If another registry mode is optimized, intercept and show warning popup
+      if ($activeMode -and $activeMode -ne "Mode13" -and $activeMode -ne "Mode14" -and $script:selectedMode -ne $activeMode -and $script:selectedMode -ne "Mode13" -and $script:selectedMode -ne "Mode14") {
+        $activeModeName = "Active Settings"
+        if ($modeConfig[$activeMode]) {
+          $activeModeName = $modeConfig[$activeMode].Description.Split(":")[0].Replace(" Mode", "").ToUpper()
+        }
+        Show-RestoreWarningPrompt -activeModeName $activeModeName
+        return
+      }
+    }
+
+    $btnLaunch.IsEnabled = $false
+
+    while ($true) {
+      $devAuth = Show-DevKeyPrompt
+      if ($devAuth -eq "SUCCESS") {
+        Invoke-OptimizationLaunch -mode $script:selectedMode
+        break
+      }
+      elseif ($devAuth -eq "CANCEL") {
+        $btnLaunch.IsEnabled = $true
+        break
+      }
+      # If WRONG, the loop continues and displays the popup verification again
+    }
   })
 
 # --- Check optimization status and display in LogBox ---
@@ -3003,4 +3400,73 @@ $btnRestore.Add_Click({
     }
   })
 
+# Configure cards dynamically with card-game selection transforms, origin and drop shadows
+$allCards = @("AnalysisCard")
+for ($i = 1; $i -le 15; $i++) { $allCards += "Mode${i}Card" }
+
+foreach ($cardName in $allCards) {
+  $c = $window.FindName($cardName)
+  if ($c) {
+    $c.RenderTransformOrigin = New-Object System.Windows.Point(0.5, 0.5)
+    
+    # Create TransformGroup with ScaleTransform and TranslateTransform
+    $tg = New-Object System.Windows.Media.TransformGroup
+    $st = New-Object System.Windows.Media.ScaleTransform
+    $st.ScaleX = 1.0
+    $st.ScaleY = 1.0
+    $tt = New-Object System.Windows.Media.TranslateTransform
+    $tt.X = 0.0
+    $tt.Y = 0.0
+    
+    $tg.Children.Add($st) | Out-Null
+    $tg.Children.Add($tt) | Out-Null
+    $c.RenderTransform = $tg
+    
+    # Configure DropShadow color dynamically
+    $colorHex = "#00A3FF"
+    if ($cardName -eq "AnalysisCard") {
+      $colorHex = "#00FFA3"
+    } else {
+      $modeKey = $cardName.Replace("Card", "")
+      if ($modeConfig[$modeKey]) { $colorHex = $modeConfig[$modeKey].Color }
+    }
+    
+    $ds = New-Object System.Windows.Media.Effects.DropShadowEffect
+    $ds.BlurRadius = 12
+    $ds.Color = [System.Windows.Media.ColorConverter]::ConvertFromString($colorHex)
+    $ds.ShadowDepth = 0
+    $ds.Opacity = 0.3
+    $c.Effect = $ds
+  }
+}
+
 $window.ShowDialog() | Out-Null
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
